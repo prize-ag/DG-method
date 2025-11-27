@@ -1,0 +1,273 @@
+program youn
+  implicit none
+
+  integer, parameter :: Dg_ord = 3
+  integer, parameter :: Legendre_ord = Dg_ord - 1
+
+  integer, parameter :: max_imax = 400   ! 가장 큰 grid 기준으로 배열 크기 설정
+  integer, dimension(4), parameter :: imax_list = [50,100,200,400]
+
+  ! 배열
+  double precision :: x(max_imax), dx(max_imax)
+  double precision :: u_0(max_imax, 0:Legendre_ord)
+  double precision :: Q(1:6,1:2), M(0:Legendre_ord,0:Legendre_ord)
+  double precision :: error(4)
+
+  ! 기타 변수
+  integer :: ntest, imax
+  double precision :: x_left, x_right
+
+  ! 외부 함수
+  double precision, external :: Ini_u, Le_poly
+
+  ! 기본 설정
+  x_left = -1.0d0
+  x_right = 1.0d0
+
+  write(*,*) " "
+  write(*,*) "**   DG Method L2 Error Convergence Test   **"
+  write(*,*) " "
+
+  call Get_Quadrature(4, Q)
+  call Get_Mass(Legendre_ord, Q, M)
+
+  ! ======================= Loop over imax ==========================
+  do ntest = 1, size(imax_list)
+    imax = imax_list(ntest)
+
+    call Get_Spatial(imax, x_left, x_right, x, dx)
+    call Get_Initial(Legendre_ord, Q, M, imax, x, dx, u_0, error(ntest))
+  enddo
+  ! ================================================================
+
+  ! ======================= 결과 표 출력 ============================
+  write(*,*) " "
+  write(*,*) "==============================================================="
+  write(*,*) "   imax        L2 Error              Ratio       Order"
+  write(*,*) "---------------------------------------------------------------"
+  do ntest = 1, size(imax_list)
+    if (ntest == 1) then
+        write(*,'(I8,2X,E16.9,10X,"-",8X,"-")') imax_list(ntest), error(ntest)
+    else
+        write(*,'(I8,2X,E16.9,2X,F10.4,2X,F10.4)') imax_list(ntest), error(ntest), &
+          error(ntest-1)/error(ntest), dlog(error(ntest-1)/error(ntest))/dlog(2.0d0)
+    endif
+  enddo
+
+  write(*,*) "==============================================================="
+  write(*,*) " "
+end program youn
+
+
+
+! 적분할때, 노드의 위치와 가중치들을 알려주는 함수
+! ord에 따라서 노드와 가중치가 달라진다. 
+! 박사님 --> scaled 된 걸 사용 왜그랬을까? 
+! 일단 나도 scaled 된걸 사용하겠다. 
+! ord --> 사용하는 점의 개수 
+! 즉 점이 n개면 2n-1차 다항식까지 완벽하게 표현 가능! 
+
+! 왜 박사님은 -1/2 에서 1/2 로 scaled 된 걸 사용했을까..? !!!!!!!!!!!!!!!!!!!!!!
+subroutine Get_Quadrature(ord,Q) 
+
+    implicit none
+
+    integer,intent(in) :: ord 
+
+    double precision,intent(out) ::Q(1:6,1:2)
+
+    Q = 0.0d0
+    
+    select case(ord)
+
+        case (2) 
+            Q(1,1) = -dsqrt(3.0d0) / 3.0d0 / 2.0d0
+            Q(2,1) = +dsqrt(3.0d0) / 3.0d0 / 2.0d0
+            
+            Q(1,2) = 1.0d0 / 2.0d0
+            Q(2,2) = 1.0d0 / 2.0d0
+
+        case (3) 
+            Q(1,1) = -dsqrt(15.0d0) / 5.0d0 / 2.0d0
+            Q(2,1) = 0.0d0
+            Q(3,1) = +dsqrt(15.0d0) / 5.0d0 / 2.0d0
+
+            Q(1,2) = 5.0d0 / 9.0d0 / 2.0d0
+            Q(2,2) = 8.0d0 / 9.0d0 / 2.0d0
+            Q(3,2) = 5.0d0 / 9.0d0 / 2.0d0
+
+        case(4) 
+            Q(1,1) = -dsqrt(3.0d0 / 7.0d0 + 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+            Q(2,1) = -dsqrt(3.0d0 / 7.0d0 - 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+            Q(3,1) = +dsqrt(3.0d0 / 7.0d0 - 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+            Q(4,1) = +dsqrt(3.0d0 / 7.0d0 + 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+
+            Q(1,2) = (18.0d0 - dsqrt(30.0d0))/36.0d0 / 2.0d0
+            Q(2,2) = (18.0d0 + dsqrt(30.0d0))/36.0d0 / 2.0d0
+            Q(3,2) = (18.0d0 + dsqrt(30.0d0))/36.0d0 / 2.0d0
+            Q(4,2) = (18.0d0 - dsqrt(30.0d0))/36.0d0 / 2.0d0
+
+
+
+        case default 
+            print * , "order는 숫자여야하고, 7이하여야합니다. "
+        
+    end select
+
+    return 
+endsubroutine
+
+
+subroutine Get_Mass(Legendre_ord, Q, M)
+  implicit none
+  integer, intent(in) :: Legendre_ord
+  double precision, intent(in) :: Q(1:6,1:2)
+  double precision, intent(out) :: M(0:Legendre_ord,0:Legendre_ord)
+  integer :: i,j,k
+  double precision, external :: Le_poly
+
+  do i = 0, Legendre_ord
+    do j = 0, Legendre_ord
+      M(i,j) = 0.0d0
+      do k = 1, 6
+        M(i,j) = M(i,j) + Le_poly(i,Q(k,1)) * Le_poly(j,Q(k,1)) * Q(k,2)
+      end do
+      if (dabs(M(i,j)) < 1d-12) then 
+        M(i,j) = 0.0d0
+      else
+        M(i,j) = 1.0d0 / M(i,j) 
+      endif
+    enddo
+  enddo
+
+  write(*,*) "===========================Mass matrix==========================="
+  do i=0,Legendre_ord
+    write(*,'(4G16.6)') M(i,0:Legendre_ord)
+  end do
+  write(*,*) "================================================================="
+  write(*,*) " "
+endsubroutine
+
+! i_bc는 바운더리에서 근사할때 만들 필요가 있어서 필요한 거 (ghost cell) --> 나중에! 
+! imax는 셀의 개수!!!!! 
+
+! 즉 우리는 셀를 imax개로 쪼갤 거다!! 
+
+
+subroutine Get_Spatial(imax, x_left, x_right, x, dx)
+  implicit none
+  integer,intent(in) :: imax
+  double precision,intent(in) :: x_left, x_right
+  double precision,intent(out) :: x(1:imax), dx(1:imax)
+  double precision :: x_length
+  double precision :: temp_x(0:imax)
+  integer :: i
+
+  x_length = x_right - x_left
+  do i = 0, imax
+    temp_x(i) = x_left + i * x_length / dble(imax)
+  end do
+
+  do i = 1, imax
+    x(i)  = (temp_x(i-1) + temp_x(i)) / 2.0d0
+    dx(i) = temp_x(i) - temp_x(i-1)
+  end do
+endsubroutine
+
+
+
+
+subroutine Get_Initial(Legendre_ord, Q, M, imax, x, dx, u_0, L2error)
+  implicit none
+  integer, intent(in) :: Legendre_ord, imax
+  double precision, intent(in) :: Q(1:6,1:2), M(0:Legendre_ord,0:Legendre_ord)
+  double precision, intent(in) :: x(1:imax), dx(1:imax)
+  double precision, intent(out) :: u_0(1:imax,0:Legendre_ord)
+  double precision, intent(out) :: L2error
+
+  double precision, external :: Ini_u, Le_poly
+  double precision :: xq(6), temp_sum
+  double precision :: exact_u_0(imax), sum_u_0(imax)
+  integer :: i, j, k
+
+  do i = 1, imax
+    do k = 1, 6
+      xq(k) = dx(i)*Q(k,1) + x(i)
+    end do
+
+    do j = 0, Legendre_ord
+      u_0(i,j) = 0.0d0
+      do k = 1, 6
+        u_0(i,j) = u_0(i,j) + Ini_u(xq(k)) * Le_poly(j, Q(k,1)) * Q(k,2)
+      end do
+      u_0(i,j) = u_0(i,j) * M(j,j)
+    end do
+  end do
+
+  do i = 1, imax
+    temp_sum = 0.0d0
+    do j = 0, Legendre_ord
+      temp_sum = temp_sum + u_0(i,j) * Le_poly(j, 0.0d0)
+    end do
+    sum_u_0(i) = temp_sum
+    exact_u_0(i) = Ini_u(x(i))
+  end do
+
+  L2error = dsqrt(sum((exact_u_0 - sum_u_0)**2 * dx))
+endsubroutine
+
+subroutine Get_L2_Error(imax,dx,exact,numerical)
+    implicit none
+
+    integer,intent(in) :: imax 
+    double precision,intent(in) :: dx(1:imax)
+    double precision,intent(in) :: exact(1:imax), numerical(1:imax) 
+    double precision :: Error 
+    
+    integer :: i 
+    double precision,dimension(1:imax) :: temp_dif
+
+    do i = 1, imax  
+        temp_dif(i) = (exact(i) - numerical(i))**2 
+
+    enddo
+
+    Error = dsqrt(sum(temp_dif) / sum(dx)) 
+
+    write(*,*) " L2 Error :  " , Error 
+
+    return
+endsubroutine   
+
+
+
+
+
+double precision function Ini_u(x)
+  implicit none
+  double precision, intent(in) :: x
+  double precision, parameter :: pi = 4.0d0*datan(1.0d0)
+  Ini_u = dsin(pi*x)
+endfunction
+
+
+double precision function Le_poly(ord, x)
+  implicit none
+  integer, intent(in) :: ord
+  double precision, intent(in) :: x
+
+  select case(ord)
+  case(0)
+    Le_poly = 1.0d0
+  case(1)
+    Le_poly = x
+  case(2)
+    Le_poly = x**2 - 1.0d0/12.0d0
+  case(3)
+    Le_poly = x**3 - (3.0d0/20.0d0)*x
+  case(4)
+    Le_poly = x**4 - (3.0d0/14.0d0)*x**2 + 3.0d0/560.0d0
+  case default
+    Le_poly = 0.0d0
+  end select
+endfunction

@@ -1,0 +1,1432 @@
+program RKDG_WENO_SCALAR_LEGENDRE
+  implicit none
+
+  !Counters
+  integer :: ord !Index of the degree for Legendre polymomials
+  integer :: i !Spatial(x-axis) index
+  integer :: n !Time index
+
+  !Order of the discontinuous Galerkin method and polynomials
+  integer,parameter :: DG_ord=3 !Order of DG solver (2,3,4,5)
+  integer,parameter :: Legen_ord=DG_ord-1 !Order of polymomials (1,2,3,4)
+
+  !Useful constants
+  double precision,parameter :: pi=4.0d0*datan(1.0d0)
+  double precision,parameter :: CFL=0.5d0/dble(2*Legen_ord+1) !CFL number
+  double precision :: TVB_M !TVB constant
+
+  !Spatial variables
+  integer,parameter :: imax=50*(2**0) !Number of spatial cells
+  integer,parameter :: i_bc=0 !Ghost boundary cells for WENO schemes
+  double precision,parameter :: x_left=-1.0d0 !Left boundary on x-axis
+  double precision,parameter :: x_right=1.0d0 !Right boundary on x-axis
+  double precision,parameter :: x_length=dabs(x_right-x_left) !Length of domain
+  double precision,dimension(-i_bc+1:imax+i_bc) :: x,u_0 !Cell centers
+  double precision,dimension(-i_bc+1:imax+i_bc) :: dx !Cell volumes
+  
+  !Time variables
+  integer :: RK_ord !Order of Runge-Kutta solver
+  integer,parameter :: nmax=999999999 !Number of the marching step
+  double precision,parameter :: time_out=1d-20 !Final time of the solution
+  double precision :: dt !Time step size
+  double precision :: flag_0,flag_1 !Time flags
+
+  !Cpu time checkers
+  integer :: rate,time_0,time_1
+
+  !Variables for quadratures
+  double precision,dimension(1:6,1:2) :: Q 
+  
+  !Several functions
+  double precision,external :: Ini_u,Ext_u
+
+  !Legendre polynomials
+  double precision,external :: Le_poly
+
+  !Mass coefficient matrices
+  double precision,dimension(0:Legen_ord,0:Legen_ord) :: M
+
+  !Cell interface contributions
+  double precision,dimension(0:Legen_ord) :: l_b,r_b
+  
+  !Polynomial ideal weights 
+  double precision,dimension(0:Legen_ord,1:Legen_ord+2) :: d 
+
+  !Degrees of freedom in the moments by the L2 projection
+  double precision,dimension(0:Legen_ord,-i_bc+1:imax+i_bc) :: old_u 
+  double precision,dimension(0:Legen_ord,1:imax) :: new_u 
+
+  !Convex summation of degrees of freedom and Legendre polynommials 
+  double precision :: temp_sum
+  double precision,dimension(1:imax) :: sum_ext_u,sum_new_u
+
+  write(*,*) "================================================================="
+  write(*,*) "        Scalar conservation laws solver. (Linear advection)      "
+  write(*,*) "================================================================="
+  write(*,*) "                    Calculations have started.                   "
+  write(*,*) "================================================================="
+  write(*,*) " "
+
+  call Get_Quadrature(4,Q)
+  call Get_Mass(Legen_ord,Q,M)
+  call Get_Spatial(i_bc,imax,x_left,x_length,x,dx)
+  call Get_Initial(Legen_ord,Q,M,i_bc,imax,x,dx,old_u,l_b,r_b)
+ ! call Get_Weights(Legen_ord,Q,i_bc,imax,x,dx,d)
+
+  open(unit=10, file='result6.dat', status='unknown')
+  do i = 1, imax
+    write(10,*) x(i), old_u(0,i)
+  enddo
+  close(10)
+
+  !Set the TVB constant
+  !if TVB_M is chosen too small(<1.0d0), smooth cells will be declared troubled cells,
+  !so unnecessary WENO reconstructions will be appear.
+  !if TVB_M is chosen too large(>1.0d0), trouble cells will be declared smooth cells,
+  !so suprious oscillations will be appear.
+endprogram
+
+subroutine Get_Quadrature(ord,Q)
+  implicit none
+  
+  integer,intent(in) :: ord
+
+  double precision,intent(out) :: Q(1:6,1:2)
+  !-------------------------Calculations have started--------------------------!
+
+  !Quadrature nodes and weights are scaled 
+  !for integrations on [-1.0d0/2.0d0,1.0d0/2.0d0]
+  
+  if(ord.eq.1)then
+   !Nodes of 4th-order Gauss-Legendre quadrature
+	  Q(1,1)=dsqrt(3.0d0)/6.0d0
+	  Q(2,1)=-Q(1,1)
+
+   !Weights of 4th-order Gauss-Legendre quadrature
+	  Q(1,2)=1.0d0/2.0d0
+	  Q(2,2)=Q(1,2)
+
+  elseif(ord.eq.3)then
+   !Nodes of 6th-order Gauss-Lobatto quadrature
+	  Q(1,1)=1.0d0/2.0d0
+	  Q(2,1)=-Q(1,1)
+	  Q(3,1)=dsqrt(5.0d0)/10.0d0
+	  Q(4,1)=-Q(3,1)
+
+   !Weights of 6th-order Gauss-Lobatto quadrature
+	  Q(1,2)=1.0d0/12.0d0
+	  Q(2,2)=Q(1,2)
+	  Q(3,2)=5.0d0/12.0d0
+	  Q(4,2)=Q(3,2)
+
+  elseif(ord.eq.2)then
+   !Nodes of 8th-order Gauss-Legendre quadrature
+   	Q(1,1)=dsqrt(3.0d0/7.0d0+(2.0d0/7.0d0)*dsqrt(6.0d0/5.0d0))/2.0d0
+  	Q(2,1)=dsqrt(3.0d0/7.0d0-(2.0d0/7.0d0)*dsqrt(6.0d0/5.0d0))/2.0d0
+  	Q(3,1)=-Q(2,1)
+  	Q(4,1)=-Q(1,1)
+
+   !Weights of 8th-order Gauss-Legendre quadrature
+  	Q(1,2)=(18.0d0-dsqrt(30.0d0))/72.0d0
+  	Q(2,2)=(18.0d0+dsqrt(30.0d0))/72.0d0
+  	Q(3,2)=Q(2,2)
+  	Q(4,2)=Q(1,2)
+
+  elseif(ord.eq.4)then
+   !Nodes of 10th-order Gauss-Lobatto quadrature
+  	Q(1,1)=1.0d0/2.0d0
+  	Q(2,1)=-Q(1,1)
+  	Q(3,1)=dsqrt(147.0d0+42.0d0*dsqrt(7.0d0))/42.0d0
+  	Q(4,1)=-Q(3,1)
+  	Q(5,1)=dsqrt(147.0d0-42.0d0*dsqrt(7.0d0))/42.0d0
+    Q(6,1)=-Q(5,1)
+
+   !Weights of 10th-order Gauss-Lobatto quadrature
+  	Q(1,2)=1.0d0/30.0d0
+  	Q(2,2)=Q(1,2)
+  	Q(3,2)=-7.0d0+5.0d0*dsqrt(7.0d0)
+    Q(3,2)=Q(3,2)*dsqrt(7.0d0)*(7.0d0+dsqrt(7.0d0))/840.0d0
+  	Q(4,2)=Q(3,2)
+  	Q(5,2)=7.0d0+5.0d0*dsqrt(7.0d0)
+    Q(5,2)=Q(5,2)*dsqrt(7.0d0)/(7.0d0+dsqrt(7.0d0))/20.0d0
+    Q(6,2)=Q(5,2)
+  endif
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Mass(Legen_ord,Q,M)
+  implicit none
+  
+  integer,intent(in) :: Legen_ord
+  double precision,intent(in) :: Q(1:6,1:2) 
+
+  double precision,intent(out) :: M(0:Legen_ord,0:Legen_ord)
+ 
+  !Counters
+  integer :: ord_0,ord_1
+
+  !Legendre polynomials
+  double precision,external :: Le_poly
+  !-------------------------Calculations have started--------------------------!
+  
+  !Compute the inverse of the mass matrix
+  do ord_0=0,Legen_ord
+    do ord_1=0,Legen_ord
+      M(ord_0,ord_1)&
+      &=(Le_poly(ord_0,Q(1,1))*Le_poly(ord_1,Q(1,1)))*Q(1,2)&
+      &+(Le_poly(ord_0,Q(2,1))*Le_poly(ord_1,Q(2,1)))*Q(2,2)&
+      &+(Le_poly(ord_0,Q(3,1))*Le_poly(ord_1,Q(3,1)))*Q(3,2)&
+      &+(Le_poly(ord_0,Q(4,1))*Le_poly(ord_1,Q(4,1)))*Q(4,2)&
+      &+(Le_poly(ord_0,Q(5,1))*Le_poly(ord_1,Q(5,1)))*Q(5,2)&
+      &+(Le_poly(ord_0,Q(6,1))*Le_poly(ord_1,Q(6,1)))*Q(6,2)
+      
+      if(M(ord_0,ord_1).ge.1d-10)then
+  !Inversion  
+        M(ord_0,ord_1)=1.0d0/M(ord_0,ord_1)
+      else
+        M(ord_0,ord_1)=0.0d0
+      endif
+    enddo
+  enddo
+  
+  write(*,*) "===========================Mass matrix==========================="
+  do ord_0=0,size(M,1)-1
+    write(*,*) real(M(ord_0,:))
+  enddo
+  write(*,*) "================================================================="
+  write(*,*) " "
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Spatial(i_bc,imax,x_left,x_length,x,dx)
+  implicit none 
+
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: x_left,x_length
+  
+  double precision,intent(out) :: x(-i_bc+1:imax+i_bc),dx(-i_bc+1:imax+i_bc)
+
+  !Counter
+  integer :: i
+
+  !Calculation variable
+  double precision,dimension(0:imax) :: temp_x 
+  !-------------------------Calculations have started--------------------------!
+  
+  !Generate physical cell center locations and volumes of cells
+  do i=0,imax
+    temp_x(i)=x_left+dble(i)*dble(x_length/imax)
+  enddo
+  
+  do i=1,imax
+    x(i)=(temp_x(i)+temp_x(i-1))/2.0d0
+    dx(i)=dabs(temp_x(i)-temp_x(i-1))
+  enddo
+
+  !Generate ghost cell center locations and volumes of cells 
+  !for Lagrange interpolation at boundaries
+  do i=1,i_bc-1
+	  x(-i)=x(imax-i)-x_length
+    x(imax+i)=x(i)+x_length
+
+	  dx(-i)=dx(imax-i)
+	  dx(imax+i)=dx(i)
+	enddo
+  
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Initial(Legen_ord,Q,M,i_bc,imax,x,dx,u_0,l_b,r_b)
+  implicit none
+  
+  integer,intent(in) :: Legen_ord
+  double precision,intent(in) :: Q(1:6,1:2) 
+  double precision,intent(in) :: M(0:Legen_ord,0:Legen_ord)
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: x(-i_bc+1:imax+i_bc),dx(-i_bc+1:imax+i_bc)
+
+  double precision,intent(out) :: u_0(0:Legen_ord,-i_bc+1:imax+i_bc)
+  double precision,intent(out) :: l_b(0:Legen_ord),r_b(0:Legen_ord)
+ 
+  !Counters
+  integer :: ord
+  integer :: i
+
+  !Initial data
+  double precision,external :: Ini_u
+
+  !Legendre polynomials
+  double precision,external :: Le_poly
+
+  !Calculation variables
+  double precision :: x_1,x_2,x_3,x_4,x_5,x_6
+  double precision :: temp_sum
+  double precision,dimension(1:imax) :: sum_u_0,exact_u_0
+  !-------------------------Calculations have started--------------------------!
+  
+  !Compute L2-projection of initial data into the finite element space
+  do i=1,imax
+  !Transform nodes                                                                                                                                                                                                                                                                                                                                                     by using the liner transform
+    x_1=x(i)+Q(1,1)*dx(i)
+    x_2=x(i)+Q(2,1)*dx(i)
+    x_3=x(i)+Q(3,1)*dx(i)
+    x_4=x(i)+Q(4,1)*dx(i)
+    x_5=x(i)+Q(5,1)*dx(i)
+    x_6=x(i)+Q(6,1)*dx(i)
+
+  !Compute degree of freedoms of initial data by using quadratures
+    do ord=0,Legen_ord
+      u_0(ord,i)=Ini_u(x_1)*Le_poly(ord,Q(1,1))*Q(1,2)&
+               &+Ini_u(x_2)*Le_poly(ord,Q(2,1))*Q(2,2)&
+               &+Ini_u(x_3)*Le_poly(ord,Q(3,1))*Q(3,2)&
+               &+Ini_u(x_4)*Le_poly(ord,Q(4,1))*Q(4,2)&
+               &+Ini_u(x_5)*Le_poly(ord,Q(5,1))*Q(5,2)&
+               &+Ini_u(x_6)*Le_poly(ord,Q(6,1))*Q(6,2)
+    
+  !Product the mass matrix for the orthonormalization                 
+      u_0(ord,i)=M(ord,ord)*u_0(ord,i)
+    enddo
+  enddo              
+                                  
+  !Compute the convex summation by using calculated degrees of freedom
+  !((x(i)-x(i))/dx(i)=0.0d0: Cell center 
+  do i=1,imax
+    temp_sum=0.0d0
+    do ord=0,Legen_ord
+      temp_sum=temp_sum+u_0(ord,i)*Le_poly(ord,0.0d0)
+      sum_u_0(i)=temp_sum
+    enddo
+  enddo
+  !call Get_Result(i_bc,imax,x,sum_u_0)
+
+  !Set the exact solution of the initial function
+  do i=1,imax
+    exact_u_0(i)=Ini_u(x(i))
+  enddo
+  
+  write(*,*) "======================Initial error results======================"
+  call Get_L_2_Error(i_bc,imax,dx,exact_u_0,sum_u_0)
+  !call Get_L_Infty_Error(imax,exact_u_0,sum_u_0)
+  write(*,*) "================================================================="
+  write(*,*) " "
+
+  !Compute cell interface contributions
+  !((x(i)-dx(i)/2.0d0)-x(i))/dx(i)=-1.0d0/2.0d0: Left cell interface
+  !((x(i)+dx(i)/2.0d0)-x(i))/dx(i)=+1.0d0/2.0d0: Right cell interface
+  do ord=0,Legen_ord
+    l_b(ord)=Le_poly(ord,-1.0d0/2.0d0)
+    r_b(ord)=Le_poly(ord,+1.0d0/2.0d0)
+  enddo
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Weights(Legen_ord,Q,i_bc,imax,x,dx,d)
+  implicit none
+  
+  integer,intent(in) :: Legen_ord
+  double precision,intent(in) :: Q(1:6,1:2) 
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: x(-i_bc+1:imax+i_bc)
+  double precision,intent(in) :: dx(-i_bc+1:imax+i_bc) 
+
+  double precision,intent(out) :: d(0:Legen_ord,1:Legen_ord+2)
+  
+  !Counters
+  integer :: i
+  integer :: ord
+  integer :: quad
+  integer :: l
+
+  !Lagrange coefficient
+  double precision,external :: Lag_C
+
+  !Kernels for the local polynomial
+  double precision,dimension(0:Legen_ord,-Legen_ord:Legen_ord,1:Legen_ord+3)&
+                                                               & :: L_K
+  !Kernels for the global polynomial
+  double precision,dimension(-Legen_ord:Legen_ord,1:Legen_ord+3) :: G_K
+  !-------------------------Calculations have started--------------------------!
+  
+  i=1
+  if((Legen_ord+1).eq.2)then
+   !Third-order interpolation
+    do quad=1,Legen_ord+1
+   !Compute local kernels for each quadrature nodes on [-1,0]
+      do l=-1,0
+        L_K(0,l,quad)=Lag_C(l,-1,0,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [0,1]
+      do l=0,1
+        L_K(1,l,quad)=Lag_C(l,0,1,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute global kernels for each quadrature nodes on [-1,0,1]
+      do l=-1,1
+        G_K(l,quad)=Lag_C(l,-1,1,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute ideal weights
+      d(0,quad)=G_K(-1,quad)/L_K(0,-1,quad)
+      d(Legen_ord,quad)=G_K(1,quad)/L_K(1,1,quad)
+    enddo
+  elseif((Legen_ord+1).eq.3)then
+   !Fifth-order interpolation
+    do quad=1,Legen_ord+2
+   !Compute local kernels for each quadrature nodes on [-2,-1,0]
+      do l=-2,0
+        L_K(0,l,quad)=Lag_C(l,-2,0,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [-1,0,1]
+      do l=-1,1
+        L_K(1,l,quad)=Lag_C(l,-1,1,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [0,1,2]
+      do l=0,2
+        L_K(2,l,quad)=Lag_C(l,0,2,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute global kernels for each quadrature nodes on [-2,-1,0,1,2]
+      do l=-2,2
+        G_K(l,quad)=Lag_C(l,-2,2,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute ideal weights
+      d(0,quad)=G_K(-2,quad)/L_K(0,-2,quad)
+      d(Legen_ord,quad)=G_K(2,quad)/L_K(2,2,quad)
+
+      d(1,quad)=G_K(-1,quad)-d(0,quad)*L_K(0,-1,quad)
+      d(1,quad)=d(1,quad)/L_K(1,-1,quad)
+    enddo
+  elseif((Legen_ord+1).eq.4)then
+   !Seventh-order interpolation
+    do quad=1,Legen_ord+1
+   !Compute local kernels for each quadrature nodes on [-3,-2,-1,0]
+      do l=-3,0
+        L_K(0,l,quad)=Lag_C(l,-3,0,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [-2,-1,0,1]
+      do l=-2,1
+        L_K(1,l,quad)=Lag_C(l,-2,1,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [-1,0,1,2]
+      do l=-1,2
+        L_K(2,l,quad)=Lag_C(l,-1,2,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [0,1,2,3]
+      do l=0,3
+        L_K(3,l,quad)=Lag_C(l,0,3,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute global kernels for each quadrature nodes on [-3,-2,-1,0,1,2,3]
+      do l=-3,3
+        G_K(l,quad)=Lag_C(l,-3,3,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute ideal weights
+      d(0,quad)=G_K(-3,quad)/L_K(0,-3,quad)
+      d(Legen_ord,quad)=G_K(3,quad)/L_K(3,3,quad)
+
+      d(1,quad)=G_K(-2,quad)-d(0,quad)*L_K(0,-2,quad)
+      d(1,quad)=d(1,quad)/L_K(1,-2,quad)
+
+      d(2,quad)=G_K(-1,quad)-d(0,quad)*L_K(0,-1,quad)&
+                           &-d(1,quad)*L_K(1,-1,quad)
+      d(2,quad)=d(2,quad)/L_K(2,-1,quad) 
+    enddo
+  elseif((Legen_ord+1).eq.5)then
+   !Ninth-order interpolation
+    do quad=1,Legen_ord+2
+   !Compute local kernels for each quadrature nodes on [-4,-3,-2,-1,0]
+      do l=-4,0
+        L_K(0,l,quad)=Lag_C(l,-4,0,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [-3,-2,-1,0,1]
+      do l=-3,1
+        L_K(1,l,quad)=Lag_C(l,-3,1,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [-2,-1,0,1,2]
+      do l=-2,2
+        L_K(2,l,quad)=Lag_C(l,-2,2,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [-1,0,1,2,3]
+      do l=-1,3
+        L_K(3,l,quad)=Lag_C(l,-1,3,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute local kernels for each quadrature nodes on [0,1,2,3,4]
+      do l=0,4
+        L_K(4,l,quad)=Lag_C(l,0,4,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute global kernels for each quadrature nodes on [-4,-3,-2,-1,0,1,2,3,4]
+      do l=-4,4
+        G_K(l,quad)=Lag_C(l,-4,4,i_bc,imax,i,x,dx,Q(quad,1))
+      enddo
+   !Compute ideal weights
+      d(0,quad)=G_K(-4,quad)/L_K(0,-4,quad)
+      d(Legen_ord,quad)=G_K(4,quad)/L_K(4,4,quad)
+
+      d(1,quad)=G_K(-3,quad)-d(0,quad)*L_K(0,-3,quad)
+      d(1,quad)=d(1,quad)/L_K(1,-3,quad)
+    
+      d(2,quad)=G_K(-2,quad)-d(0,quad)*L_K(0,-2,quad)&
+                           &-d(1,quad)*L_K(1,-2,quad)
+      d(2,quad)=d(2,quad)/L_K(2,-2,quad)                   
+
+      d(3,quad)=G_K(-1,quad)-d(0,quad)*L_K(0,-1,quad)&
+                           &-d(1,quad)*L_K(1,-1,quad)&
+                           &-d(2,quad)*L_K(2,-1,quad)
+      d(3,quad)=d(3,quad)/L_K(3,-1,quad)
+    enddo
+  endif
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Timestep(DG_ord,i_bc,imax,dx,flag_1,time_out,CFL,dt)
+  implicit none
+  
+  integer,intent(in) :: DG_ord
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: dx(-i_bc+1:imax+i_bc)
+  double precision,intent(in) :: flag_1,time_out,CFL
+
+  double precision,intent(out) :: dt
+  !-------------------------Calculations have started--------------------------!
+
+  dt=CFL*maxval(dx)/1.0d0
+  !Smooth case
+  if(DG_ord.gt.4)then
+    dt=CFL*(maxval(dx)**(DG_ord/4))/1.0d0
+  endif
+
+  !Nonsmooth case
+  !if(DG_ord.ge.3)then
+  !  dt=CFL*(maxval(dx)**(DG_ord/3))/1.0d0
+  !endif
+
+  if((flag_1+dt).ge.time_out)then
+    dt=(time_out-flag_1)
+  endif
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Boundary(Legen_ord,i_bc,imax,u)
+  implicit none
+ 
+  integer,intent(in) :: Legen_ord
+  integer,intent(in) :: i_bc,imax
+
+  double precision,intent(inout) :: u(0:Legen_ord,-i_bc+1:imax+i_bc)
+
+  !Counters
+  integer :: ord
+  integer :: i
+  !-------------------------Calculations have started--------------------------!
+
+  !Apply periodic conditions to ghost cells
+  do i=1,i_bc
+    do ord=0,Legen_ord 
+      u(ord,-i+1)=u(ord,imax-i+1)
+      u(ord,imax+i)=u(ord,i)
+    enddo
+  enddo
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Minmod(TVB_M,Legen_ord,l_b,r_b,i_bc,imax,dx,u)
+  implicit none
+  
+  double precision,intent(in) :: TVB_M
+  integer,intent(in) :: Legen_ord  
+  double precision,intent(in) :: l_b(0:Legen_ord),r_b(0:Legen_ord)
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: dx(1:imax)
+  double precision,intent(inout) :: u(0:Legen_ord,-i_bc+1:imax+i_bc)
+
+  !Counters
+  integer :: ord
+  integer :: i
+
+  !First-order undivived difference of the mean
+  double precision,dimension(-i_bc+1:imax+i_bc) :: Forward_u_dx
+
+  !Variables for the limiting process
+  double precision :: temp
+  double precision,dimension(0:2) :: s !Sign values of contributions
+  double precision :: sgn_s
+  double precision :: u_left,u_right
+  double precision :: min_candi_u !A minmum of contributions
+  double precision,dimension(0:2) :: candi_u
+  !-------------------------Calculations have started--------------------------!
+
+  !Compute first-order undivived difference of the mean
+  do i=-1,imax+1
+    Forward_u_dx(i)=u(0,i+1)-u(0,i)
+  enddo
+  
+  !Apply the minmod limiting procedure to detect trouble cells
+  do i=0,imax+1
+
+  !============================================================================!
+  !Limiting procedure at the right boundary (Left flux direction)
+  !============================================================================!
+  
+  !Set up candidates and its signs for the minmod function
+    candi_u(1)=Forward_u_dx(i)
+    candi_u(2)=Forward_u_dx(i-1)
+    s(1)=sign(1.0d0,candi_u(1))
+    s(2)=sign(1.0d0,candi_u(2))
+
+    u_left=0.0d0
+    u_right=0.0d0
+    do ord=0,Legen_ord
+      u_left=u_left+u(ord,i)*r_b(ord)
+      u_right=u_right+u(ord,i)*l_b(ord)
+    enddo
+
+  !Set up the main candidate for the minmod function
+    candi_u(0)=u_left-u(0,i)
+
+  !Enact the Shu's minmod function  
+    if(dabs(candi_u(0)).le.TVB_M)then
+  !Do nothing
+      goto 10
+    else
+  !Enact the classical minmod function
+      s(0)=sign(1.0d0,candi_u(0))
+      sgn_s=(s(0)+s(1)+s(2))/3.0d0
+    
+      min_candi_u=min(dabs(candi_u(0)),dabs(candi_u(1)))
+      min_candi_u=min(min_candi_u,dabs(candi_u(2)))
+
+      do ord=0,Legen_ord
+        if(dabs(sgn_s).eq.1.0d0)then
+          u(ord,i)=sgn_s*min_candi_u
+        else
+          u(ord,i)=0.0d0
+        endif
+      enddo
+    endif
+    10 continue
+
+  !============================================================================!
+  !Limiting procedure at the left boundary (Right flux direction)
+  !============================================================================!
+   
+  !Set up the main candidate for the minmod function
+    candi_u(0)=u(0,i)-u_right
+
+  !Enact the Shu's minmod function  
+    if(dabs(candi_u(0)).le.TVB_M)then
+  !Do nothing
+      goto 20
+    else
+  !Enact the classical minmod function
+      s(0)=sign(1.0d0,candi_u(0))
+      sgn_s=(s(0)+s(1)+s(2))/3.0d0
+   
+      min_candi_u=min(dabs(candi_u(0)),dabs(candi_u(1)))
+      min_candi_u=min(min_candi_u,dabs(candi_u(2)))
+
+      do ord=0,Legen_ord
+        if(dabs(sgn_s).eq.1.0d0)then
+          u(ord,i)=sgn_s*min_candi_u
+        else
+          u(ord,i)=0.0d0
+        endif
+      enddo
+    endif
+    20 continue
+  enddo
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Minmod_WENO_JS(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx,u)
+  implicit none
+  
+  double precision,intent(in) :: TVB_M
+  integer,intent(in) :: Legen_ord
+  double precision,intent(in) :: Q(1:6,1:2) 
+  double precision,intent(in) :: M(0:Legen_ord,0:Legen_ord)
+  double precision,intent(in) :: d(0:Legen_ord,1:Legen_ord+2)
+  double precision,intent(in) :: l_b(0:Legen_ord),r_b(0:Legen_ord)
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: x(-i_bc+1:imax+i_bc),dx(-i_bc+1:imax+i_bc)
+  double precision,intent(inout) :: u(0:Legen_ord,-i_bc+1:imax+i_bc)
+
+  !Counters
+  integer :: quad
+  integer :: ord
+  integer :: i
+
+  !Legendre polynomials
+  double precision,external :: Le_poly
+
+  !Cell interface values
+  double precision,dimension(0:1,0:imax+1) :: til_u
+
+  !Lagrange coefficients and polynomials
+  double precision,external :: Lag_C,Lag_P 
+  double precision,dimension(1:Legen_ord+2) :: p_0,p_1,p_2
+  
+  !Main WENO reconstruction variables
+  integer,parameter :: n=0
+  double precision :: eps
+  double precision :: beta_0,beta_1,beta_2
+  double precision :: alpha_0,alpha_1,alpha_2,alpha_sum
+  double precision :: omega_0,omega_1,omega_2
+  double precision,dimension(1:Legen_ord+2) :: WENO
+  !-------------------------Calculations have started--------------------------!
+
+  !Set up the epsilon parameter
+  eps=maxval(dx)**n
+  !eps=1d-6
+
+  !Set up the sum of degrees of freedom except the mean
+  do i=0,imax+1
+    do ord=0,Legen_ord
+      til_u(0,i)=til_u(0,i)+u(ord,i)*l_b(ord)
+      til_u(1,i)=til_u(1,i)+u(ord,i)*r_b(ord)
+    enddo
+    til_u(0,i)=dabs(u(0,i)-til_u(0,i))
+    til_u(1,i)=dabs(til_u(1,i)-u(0,i))
+  enddo
+  
+  !Apply the WENO limiting procedure by using Shu's minmod trouble cell detector
+  do i=0,imax+1
+    if((til_u(0,i).le.TVB_M).and.(til_u(1,i).le.TVB_M))then
+   !Do nothing
+      goto 20
+    else
+   !Enact WENO limiter
+   !Fifth-order WENO scheme at four point Gauss-Lobatto quadrature
+      do quad=1,Legen_ord+2
+   !Set up adaptive local polynomials
+   ![-2,-1,0]
+        p_0(quad)=Lag_P(-2,0,Legen_ord,i_bc,imax,i,x,dx,Q(quad,1),u)
+   ![-1,0,1]
+        p_1(quad)=Lag_P(-1,1,Legen_ord,i_bc,imax,i,x,dx,Q(quad,1),u)
+   ![0,1,2]
+        p_2(quad)=Lag_P(0,2,Legen_ord,i_bc,imax,i,x,dx,Q(quad,1),u) 
+  
+   !Compute nonlinear normalized weights by using WENO scheme
+   !Local smoothness indicator
+        beta_0=(13.0d0/12.0d0)*(1.0d0*u(0,i-2)&
+                              &-2.0d0*u(0,i-1)&
+                              &+1.0d0*u(0,i+0))**2&
+               &+(1.0d0/4.0d0)*(1.0d0*u(0,i-2)&
+                              &-4.0d0*u(0,i-1)&
+                              &+3.0d0*u(0,i+0))**2
+          
+        beta_1=(13.0d0/12.0d0)*(1.0d0*u(0,i-1)&
+                              &-2.0d0*u(0,i+0)&
+                              &+1.0d0*u(0,i+1))**2&
+               &+(1.0d0/4.0d0)*(1.0d0*u(0,i-1)&
+                              &+0.0d0*u(0,i+0)&
+                              &-1.0d0*u(0,i+1))**2
+
+        beta_2=(13.0d0/12.0d0)*(1.0d0*u(0,i+0)&
+                              &-2.0d0*u(0,i+1)&
+                              &+1.0d0*u(0,i+2))**2&
+               &+(1.0d0/4.0d0)*(3.0d0*u(0,i+0)&
+                              &-4.0d0*u(0,i+1)&
+                              &+1.0d0*u(0,i+2))**2
+   !Unnormalized weights
+        alpha_0=d(0,quad)/(eps+beta_0)**2
+        alpha_1=d(1,quad)/(eps+beta_1)**2
+        alpha_2=d(2,quad)/(eps+beta_2)**2
+        alpha_sum=alpha_0+alpha_1+alpha_2
+
+   !Normalized weights
+        omega_0=alpha_0/alpha_sum
+        omega_1=alpha_1/alpha_sum
+        omega_2=alpha_2/alpha_sum
+
+   !Convex summation
+        WENO(quad)=omega_0*p_0(quad)&
+                 &+omega_1*p_1(quad)&
+                 &+omega_2*p_2(quad)
+      enddo
+   !Reconstruct degrees of freedom by comparing degrees of polynomials
+      u(1,i)=M(1,1)*(Q(1,2)*WENO(1)*Le_Poly(1,Q(1,1))&
+                   &+Q(2,2)*WENO(2)*Le_Poly(1,Q(2,1))&
+                   &+Q(3,2)*WENO(3)*Le_Poly(1,Q(3,1))&
+                   &+Q(4,2)*WENO(4)*Le_Poly(1,Q(4,1)))
+
+      u(2,i)=M(2,2)*(Q(1,2)*WENO(1)*Le_Poly(2,Q(1,1))&
+                   &+Q(2,2)*WENO(2)*Le_Poly(2,Q(2,1))&
+                   &+Q(3,2)*WENO(3)*Le_Poly(2,Q(3,1))&
+                   &+Q(4,2)*WENO(4)*Le_Poly(2,Q(4,1)))
+    endif
+    20 continue
+  enddo
+  
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                                                &,u,F_Flux)
+  implicit none
+
+  double precision,intent(in) :: TVB_M
+  integer,intent(in) :: Legen_ord
+  double precision,intent(in) :: Q(1:6,1:2) 
+  double precision,intent(in) :: M(0:Legen_ord,0:Legen_ord)
+  double precision,intent(in) :: d(0:Legen_ord,1:Legen_ord+3)
+  double precision,intent(in) :: l_b(0:Legen_ord),r_b(0:Legen_ord)
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: x(1-i_bc+1:imax+i_bc),dx(-i_bc+1:imax+i_bc)
+  double precision,intent(inout) :: u(0:Legen_ord,-i_bc+1:imax+i_bc)
+
+  double precision,intent(out) :: F_Flux(0:Legen_ord,1:imax)
+
+  !Counters
+  integer :: ord
+  integer :: i
+
+  !Flux function
+  double precision,external :: Flux
+
+  !Legendre polynomials
+  double precision,external :: Le_poly,D_Le_poly
+
+  !Cell interface values
+  double precision :: temp
+  double precision,dimension(0:imax+1) :: u_m
+  double precision,dimension(-1:imax) :: u_p
+  double precision,dimension(0:1,0:imax+1) :: til_m
+  
+  !Flux splitting variables
+  double precision :: F_max
+  double precision,dimension(0:imax) :: hat_F
+
+  !Boundary integration variable
+  double precision,dimension(0:Legen_ord,1:imax) :: F_Flux_B
+
+  !Volume integration variables
+  double precision :: uh_1,uh_2,uh_3,uh_4,uh_5,uh_6
+  double precision,dimension(0:Legen_ord,1:imax) :: F_Flux_V
+
+  !Lagrange polynomials
+  double precision,external :: Lag_P
+  !-------------------------Calculations have started--------------------------!
+
+  !Calculate the local residual
+
+  !============================================================================!
+  !Volume integral part
+  !============================================================================!
+
+  !Compute the volume integral by using quadratures
+  do i=1,imax
+    uh_1=0.0d0
+    uh_2=0.0d0
+    uh_3=0.0d0
+    uh_4=0.0d0
+    uh_5=0.0d0
+    uh_6=0.0d0
+    do ord=0,Legen_ord
+      uh_1=uh_1+u(ord,i)*Le_poly(ord,Q(1,1))
+      uh_2=uh_2+u(ord,i)*Le_poly(ord,Q(2,1))
+      uh_3=uh_3+u(ord,i)*Le_poly(ord,Q(3,1))
+      uh_4=uh_4+u(ord,i)*Le_poly(ord,Q(4,1))
+      uh_5=uh_5+u(ord,i)*Le_poly(ord,Q(5,1))
+      uh_6=uh_6+u(ord,i)*Le_poly(ord,Q(6,1))
+    enddo
+
+    do ord=0,Legen_ord
+      F_Flux_V(ord,i)=Flux(uh_1)*D_Le_poly(ord,Q(1,1))*Q(1,2)&
+                    &+Flux(uh_2)*D_Le_poly(ord,Q(2,1))*Q(2,2)&
+                    &+Flux(uh_3)*D_Le_poly(ord,Q(3,1))*Q(3,2)&
+                    &+Flux(uh_4)*D_Le_poly(ord,Q(4,1))*Q(4,2)&
+                    &+Flux(uh_5)*D_Le_poly(ord,Q(5,1))*Q(5,2)&
+                    &+Flux(uh_6)*D_Le_poly(ord,Q(6,1))*Q(6,2)
+    enddo
+  enddo
+  
+  !============================================================================!
+  !============================================================================!
+
+  !============================================================================!
+  !Boundary integral part
+  !============================================================================!
+
+  !Impose the periodic boundary condition to degrees of freedom
+  call Get_Boundary(Legen_ord,i_bc,imax,u)
+  
+  !Apply limiting process   
+  call Get_Minmod(TVB_M,Legen_ord,l_b,r_b,i_bc,imax,dx,u)
+  !call Get_Minmod_WENO_JS(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx,u)
+  
+  !For given degrees of freedom, compute convex summations at cell interfaces
+  do i=0,imax+1
+  !Left limit (-) at the right boundary 
+    temp=0.0d0
+    do ord=0,Legen_ord
+      temp=temp+u(ord,i)*r_b(ord)
+    enddo
+    u_m(i+0)=temp
+
+  !Right limit (+) at the left boundary
+    temp=0.0d0
+    do ord=0,Legen_ord
+      temp=temp+u(ord,i)*l_b(ord)
+    enddo
+    u_p(i-1)=temp
+  enddo
+
+  !Take the apropriate numerical trace 
+  !As the averaged monotone flux, apply the Lax-Friedrich flux splitting method
+  F_max=1.0d0
+  do i=0,imax
+    hat_F(i)=Flux(u_m(i))+Flux(u_p(i))
+    hat_F(i)=(hat_F(i)+F_max*(u_m(i)-u_p(i)))/2.0d0
+  enddo
+
+  !Compute the boundary integral by using the fundamental theorem of calculus
+  do i=1,imax
+    do ord=0,Legen_ord  
+      F_Flux_B(ord,i)=hat_F(i-1)*l_b(ord)-hat_F(i+0)*r_b(ord)
+    enddo
+  enddo
+
+  !============================================================================!
+  !============================================================================!
+  
+  !Compute local residuals by using calculated integral values
+  do i=1,imax
+    do ord=0,Legen_ord
+      F_Flux(ord,i)=M(ord,ord)*(F_Flux_B(ord,i)+F_Flux_V(ord,i))/dx(i)
+    enddo
+  enddo
+  
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_RK(RK_ord,TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx,dt&
+                                                           &,old_u,new_u)
+  implicit none
+  
+  integer,intent(in) :: RK_ord
+  double precision,intent(in) :: TVB_M
+  integer,intent(in) :: Legen_ord
+  double precision,intent(in) :: Q(1:6,1:2) 
+  double precision,intent(in) :: M(0:Legen_ord,0:Legen_ord)
+  double precision,intent(in) :: d(0:Legen_ord,1:Legen_ord+3)
+  double precision,intent(in) :: l_b(0:Legen_ord),r_b(0:Legen_ord)
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: x(-i_bc+1:imax+i_bc),dx(-i_bc+1:imax+i_bc)
+  double precision,intent(in) :: dt
+  double precision,intent(inout) :: old_u(0:Legen_ord,-i_bc+1:imax+i_bc)
+
+  double precision,intent(out) :: new_u(0:Legen_ord,1:imax)
+
+  !Counters
+  integer :: ord
+  integer :: i
+
+  !Calculation variables
+  double precision,dimension(0:Legen_ord,-i_bc+1:imax+i_bc,1:3) :: temp_u
+  double precision,dimension(0:Legen_ord,1:imax) :: F_Flux
+  !-------------------------Calculations have started--------------------------!
+
+  if(RK_ord.eq.1)then
+  !1st-order TVD RK solver
+  !============================================================================!
+  !Stage 1
+  !============================================================================!
+
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                                    &,old_u,F_Flux)
+
+    do i=1,imax
+      do ord=0,Legen_ord
+        new_u(ord,i)=+1.0d0*old_u(ord,i)&
+                    &+1.0d0*dt*F_Flux(ord,i)
+      enddo
+    enddo
+
+  !============================================================================!
+  !============================================================================!
+  elseif(RK_ord.eq.2)then
+  !2nd-order TVD RK solver
+  !============================================================================!
+  !Stage 1
+  !============================================================================!
+
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                                    &,old_u,F_Flux)
+
+    do i=1,imax
+      do ord=0,Legen_ord
+        temp_u(ord,i,1)=+1.0d0*old_u(ord,i)&
+                       &+1.0d0*dt*F_Flux(ord,i)
+      enddo
+    enddo
+
+  !============================================================================!
+  !============================================================================!
+
+  !============================================================================!
+  !Stage 2
+  !============================================================================!
+
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                            &,temp_u(:,:,1),F_Flux)
+    do i=1,imax
+      do ord=0,Legen_ord
+        new_u(ord,i)=+1.0d0*old_u(ord,i)&
+                    &+1.0d0*temp_u(ord,i,1)&
+                    &+1.0d0*dt*F_Flux(ord,i)
+        new_u(ord,i)=new_u(ord,i)/2.0d0
+      enddo
+    enddo
+
+  !============================================================================!
+  !============================================================================!
+  !3rd-order TVD RK solver
+  elseif(RK_ord.eq.3)then
+  !============================================================================!
+  !Stage 1
+  !============================================================================!
+
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                                    &,old_u,F_Flux)
+    do i=1,imax
+      do ord=0,Legen_ord
+        temp_u(ord,i,1)=+1.0d0*old_u(ord,i)&
+                       &+1.0d0*dt*F_Flux(ord,i)
+      enddo
+    enddo
+
+  !============================================================================!
+  !============================================================================!
+
+  !============================================================================!
+  !Stage 2
+  !============================================================================!
+
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                            &,temp_u(:,:,1),F_Flux)
+    do i=1,imax
+      do ord=0,Legen_ord
+        temp_u(ord,i,2)=+3.0d0*old_u(ord,i)&
+                        &+1.0d0*temp_u(ord,i,1)&
+                        &+1.0d0*dt*F_Flux(ord,i)
+        temp_u(ord,i,2)=temp_u(ord,i,2)/4.0d0
+      enddo
+    enddo
+
+  !============================================================================!
+  !============================================================================!
+
+  !============================================================================!
+  !Stage 3
+  !============================================================================!
+
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                            &,temp_u(:,:,2),F_Flux)
+    do i=1,imax
+      do ord=0,Legen_ord
+        new_u(ord,i)=+1.0d0*old_u(ord,i)&
+                    &+2.0d0*temp_u(ord,i,2)&
+                    &+2.0d0*dt*F_Flux(ord,i)
+        new_u(ord,i)=new_u(ord,i)/3.0d0
+      enddo
+    enddo
+  
+  !============================================================================!
+  !============================================================================!
+  elseif(RK_ord.eq.4)then
+  !4th-order non-TVD RK solver
+  !============================================================================!
+  !Stage 1
+  !============================================================================!
+  
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                                    &,old_u,F_Flux)
+    do i=1,imax
+      do ord=0,Legen_ord
+        temp_u(ord,i,1)=+1.0d0*old_u(ord,i)&
+                       &+0.5d0*dt*F_Flux(ord,i)
+      enddo
+    enddo
+
+  !============================================================================!
+  !============================================================================!
+
+  !============================================================================!
+  !Stage 2
+  !============================================================================!
+  
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                            &,temp_u(:,:,1),F_Flux)
+    do i=1,imax
+      do ord=0,Legen_ord
+        temp_u(ord,i,2)=+1.0d0*old_u(ord,i)&
+                       &+0.5d0*dt*F_Flux(ord,i)
+      enddo
+    enddo
+
+  !============================================================================!
+  !============================================================================!
+
+  !============================================================================!
+  !Stage 3
+  !============================================================================!
+
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                            &,temp_u(:,:,2),F_Flux) 
+    do i=1,imax
+      do ord=0,Legen_ord
+        temp_u(ord,i,3)=+1.0d0*old_u(ord,i)&
+                       &+1.0d0*dt*F_Flux(ord,i)
+      enddo
+    enddo
+  
+  !============================================================================!
+  !============================================================================!
+
+  !============================================================================!
+  !Stage 4
+  !============================================================================!
+
+  !Compute the residual
+    call Get_Residual(TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx&
+                                            &,temp_u(:,:,3),F_Flux)
+    do i=1,imax
+      do ord=0,Legen_ord
+        new_u(ord,i)=-1.0d0*old_u(ord,i)&
+                    &+1.0d0*temp_u(ord,i,1)&
+                    &+2.0d0*temp_u(ord,i,2)&
+                    &+1.0d0*temp_u(ord,i,3)&
+                    &+0.5d0*dt*F_Flux(ord,i)
+        new_u(ord,i)=new_u(ord,i)/3.0d0
+      enddo
+    enddo
+  
+  !============================================================================!
+  !============================================================================!
+  endif
+  
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_L_1_Error(i_bc,imax,dx,exact,numerical)
+  implicit none
+
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: dx(1-i_bc+1:imax+i_bc)
+  double precision,intent(in) :: exact(1:imax),numerical(1:imax)
+
+  !Counter
+  integer :: i
+
+  !Error calculation variables
+  double precision,dimension(1:imax) :: e
+  !-------------------------Calculations have started--------------------------!
+
+  !Compute absolute differences
+  do i=1,imax
+    e(i)=dabs(exact(i)-numerical(i))
+    e(i)=e(i)*dx(i)
+  enddo
+
+  !Compute the average sum
+  write(*,*) "L_1 error:",sum(e)
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_L_2_Error(i_bc,imax,dx,exact,numerical)
+  implicit none
+
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: dx(-i_bc+1:imax+i_bc)
+  double precision,intent(in) :: exact(1:imax),numerical(1:imax)
+
+  !Counter
+  integer :: i
+
+  !Error calculation variables
+  double precision,dimension(1:imax) :: e
+  !-------------------------Calculations have started--------------------------!
+
+  !Compute square differences
+  do i=1,imax
+    e(i)=(exact(i)-numerical(i))**2
+    e(i)=e(i)*dx(i)
+  enddo
+
+  !Compute the square root average sum
+  write(*,*) "L_2 error:",dsqrt(sum(e))
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_L_Infty_Error(imax,exact,numerical)
+  implicit none
+
+  integer,intent(in) :: imax
+  double precision,intent(in) :: exact(1:imax),numerical(1:imax)
+
+  !Counters
+  integer :: i
+
+  !Error calculation variables
+  double precision,dimension(1:imax) :: e
+  !-------------------------Calculations have started--------------------------!
+
+  !Compute absolute differences
+  do i=1,imax
+    e(i)=dabs(exact(i)-numerical(i))
+  enddo
+
+  !Take the maximum value
+  write(*,*) "L_infty error:",maxval(e)
+  write(*,*) "Maximum error location:",maxloc(e)
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Result(i_bc,imax,x,u)
+  implicit none
+
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: x(-i_bc+1:imax+i_bc)
+  double precision,intent(in) :: u(1:imax)
+
+  !Counter
+  integer :: i
+  !-------------------------Calculations have started--------------------------!
+  
+  do i=1,imax
+    write(1,*) x(i),u(i)
+  enddo
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+double precision function Ini_u(x)
+  implicit none
+
+  double precision,intent(in) :: x
+
+  !Useful constant
+  double precision,parameter :: pi=4.0d0*datan(1.0d0)
+  !-------------------------Calculations have started--------------------------!
+  
+  !Set up the initial function
+  !Smooth functions
+  !Ini_u=dcos(pi*x)**1
+  !Ini_u=dsin(pi*x)**1
+  !Ini_u=dsin(pi*x-dsin(pi*x)/pi)
+  
+  !Nonsmooth function
+  !Square wave
+  if((x.gt.-0.5d0).and.(x.lt.0.5d0))then
+    Ini_u=1.0d0
+  else
+    Ini_u=0.0d0
+  endif
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endfunction
+
+double precision function Ext_u(x,time_out)
+  implicit none
+
+  double precision,intent(in) :: x
+  double precision,intent(in) :: time_out
+
+  !Useful constant
+  double precision,parameter :: pi=4.0d0*datan(1.0d0)
+  !-------------------------Calculations have started--------------------------!
+  
+  !Set up the exact solution
+  !Smooth functions
+  Ext_u=dcos(pi*(x-time_out))**1
+  !Ext_u=dsin(pi*(x-time_out))**1
+  !Ext_u=dsin(pi*(x-time_out)-dsin(pi*(x-time_out))/pi)
+
+  !Nonsmooth function
+  !Square wave
+  ! if((x.gt.-0.5d0).and.(x.lt.0.5d0))then
+  !   Ext_u=1.0d0
+  ! else
+  !   Ext_u=0.0d0
+  ! endif
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endfunction
+
+double precision function Flux(u)
+  implicit none
+
+  double precision,intent(in) :: u
+  !-------------------------Calculations have started--------------------------!
+  
+  !Set up the flux
+  Flux=u
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endfunction
+
+double precision function Le_poly(ord,x)
+  implicit none
+
+  integer,intent(in) :: ord
+  double precision,intent(in) :: x
+  !-------------------------Calculations have started--------------------------!
+   
+  !Set up scaled-Legendre polynomials
+  if(ord.eq.0)then
+	  Le_poly=x**0
+  elseif(ord.eq.1)then
+    Le_poly=x**1
+  elseif(ord.eq.2)then
+    Le_poly=x**2-(1.0d0/12.0d0)
+  elseif(ord.eq.3)then
+    Le_poly=x**3-(3.0d0/20.0d0)*x
+  elseif(ord.eq.4)then
+    Le_poly=x**4-(3.0d0/14.0d0)*x**2+3.0d0/560.0d0
+  endif
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endfunction
+
+double precision function D_Le_poly(ord,x)
+  implicit none
+  
+  integer,intent(in) :: ord
+  double precision,intent(in) :: x
+  !-------------------------Calculations have started--------------------------!
+  
+  !Set up derivatives of scaled-Legendre polynomials
+  if(ord.eq.0)then
+	  D_Le_poly=0.0d0
+  elseif(ord.eq.1)then
+    D_Le_poly=x**0
+  elseif(ord.eq.2)then
+    D_Le_poly=2.0d0*x**1
+  elseif(ord.eq.3)then
+    D_Le_poly=3.0d0*x**2-(3.0d0/20.0d0)
+  elseif(ord.eq.4)then
+    D_Le_poly=4.0d0*x**3-(3.0d0/7.0d0)*x
+  endif
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endfunction
+
+double precision function Lag_C(l,k_l,k_r,i_bc,imax,i,x,dx,x_p)
+  implicit none
+
+  integer,intent(in) :: l !Cell counter
+  integer,intent(in) :: k_l !Minimal index of the left cell
+  integer,intent(in) :: k_r !Maximal index of the right cell
+  integer,intent(in) :: i_bc,imax,i
+  double precision,intent(in) :: x(-i_bc+1:imax+i_bc)
+  double precision,intent(in) :: dx(-i_bc+1:imax+i_bc) 
+  double precision,intent(in) :: x_p !Present location
+  
+  !Counters
+  integer :: j,k,s
+
+  !Calculation variables
+  double precision :: x_n !Neighbor cell
+  double precision :: c1,c2,c3
+  !-------------------------Calculations have started--------------------------!
+  
+  !Initialization
+  Lag_C=0.0d0
+
+  !Set up the neighbor cell
+  x_n=x(i)+x_p*dx(i)
+
+  !Compute coefficients for Lagrange interpolation
+	do k=l,k_r
+	  c1=1.0d0
+	  do j=k_l-1,k_r
+	    if(j.ne.k)then
+        c1=c1*(x(k+i)+(dx(k+i)-dx(j+i))/2.0d0-x(j+i))
+      endif
+    enddo
+	  c2=0.0d0
+	  do j=k_l-1,k_r
+	    if(j.ne.k) then
+	      c3=1.0d0
+	      do s=k_l-1,k_r
+	        if((s.ne.j).and.(s.ne.k))then
+            c3=(x_n-x(s+i)-dx(s+i)/2.0d0)*c3
+          endif 
+        enddo
+	      c2=c2+c3
+      endif
+	  enddo
+	  Lag_C=Lag_C+c2/c1
+	enddo  
+	Lag_C=Lag_C*dx(i+l)
+  
+  return
+  !-------------------------Calculations have finished-------------------------!
+endfunction
+
+double precision function Lag_P(k_l,k_r,Legen_ord,i_bc,imax,i,x,dx,x_p,u)
+  implicit none
+
+  integer,intent(in) :: k_l !Minimal index of the left cell
+  integer,intent(in) :: k_r !Maximal index of the right cell
+  integer,intent(in) :: Legen_ord
+  integer,intent(in) :: i_bc,imax
+  integer,intent(in) :: i !Present index of the cell
+  double precision,intent(in) :: x(1:imax)
+  double precision,intent(in) :: dx(1:imax) 
+  double precision,intent(in) :: x_p !Present location
+  double precision,intent(inout) :: u(0:Legen_ord,-i_bc+1:imax+i_bc) 
+
+  !Counter
+  integer :: l
+
+  !Lagrange coefficients
+  double precision,external :: Lag_C
+  !-------------------------Calculations have started--------------------------!
+  
+  !Initialization
+  Lag_P=0.0d0
+
+  !Compute the convex summation of Lagrange basis by using mean values
+  do l=k_l,k_r
+    Lag_P=Lag_P+Lag_C(l,k_l,k_r,i_bc,imax,i,x,dx,x_p)*u(0,l+i)
+ 	enddo
+
+ 	return
+  !-------------------------Calculations have finished-------------------------!
+endfunction

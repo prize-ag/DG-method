@@ -1,0 +1,157 @@
+program youn
+
+    implicit none 
+
+    integer,parameter :: Dg_ord =3 
+    integer,parameter :: Legendre_ord = Dg_ord-1 
+
+    double precision,parameter :: pi = 4.0d0*datan(1.0d0)
+    double precision,parameter :: CFL = 0.5d0/dble(2*Legendre_ord+1) 
+    double precision,parameter :: TVB_M =1.0d0
+
+    integer,parameter :: imax = 50
+    integer,parameter :: i_bc = 2*Legendre_ord+1 
+    double precision,parameter :: x_left = -1.0d0
+    double precision,parameter :: x_right = 1.0d0
+
+    double precision,dimension(1:6,1:2) :: Q = 0 
+
+
+    double precision,external :: Le_poly 
+
+    double precision,dimension(0:Legendre_ord,0:Legendre_ord) :: M 
+
+
+
+
+    write(*,*) " "
+    write(*,*) "**   윤상은 practice   **"
+    write(*,*) " "
+    write(*,*) " "
+
+
+    call Get_Quadrature(4,Q)
+    call Get_Mass(Legendre_ord,Q,M)
+
+endprogram
+
+
+! 적분할때, 노드의 위치와 가중치들을 알려주는 함수
+! ord에 따라서 노드와 가중치가 달라진다. 
+! 박사님 --> scaled 된 걸 사용 왜그랬을까? 
+! 일단 나도 scaled 된걸 사용하겠다. 
+! ord --> 사용하는 점의 개수 
+! 즉 점이 n개면 2n-1차 다항식까지 완벽하게 표현 가능! 
+
+! 왜 박사님은 -1/2 에서 1/2 로 scaled 된 걸 사용했을까..? !!!!!!!!!!!!!!!!!!!!!!
+subroutine Get_Quadrature(ord,Q) 
+
+    implicit none
+
+    integer,intent(in) :: ord 
+
+    double precision,intent(out) ::Q(1:6,1:2)
+
+    Q = 0.0d0
+    
+    select case(ord)
+
+        case (2) 
+            Q(1,1) = -dsqrt(3.0d0) / 3.0d0 / 2.0d0
+            Q(2,1) = +dsqrt(3.0d0) / 3.0d0 / 2.0d0
+            
+            Q(1,2) = 1.0d0 / 2.0d0
+            Q(2,2) = 1.0d0 / 2.0d0
+
+        case (3) 
+            Q(1,1) = -dsqrt(15.0d0) / 5.0d0 / 2.0d0
+            Q(2,1) = 0.0d0
+            Q(3,1) = +dsqrt(15.0d0) / 5.0d0 / 2.0d0
+
+            Q(1,2) = 5.0d0 / 9.0d0 / 2.0d0
+            Q(2,2) = 8.0d0 / 9.0d0 / 2.0d0
+            Q(3,2) = 5.0d0 / 9.0d0 / 2.0d0
+
+        case(4) 
+            Q(1,1) = -dsqrt(3.0d0 / 7.0d0 + 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+            Q(2,1) = -dsqrt(3.0d0 / 7.0d0 - 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+            Q(3,1) = +dsqrt(3.0d0 / 7.0d0 - 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+            Q(4,1) = +dsqrt(3.0d0 / 7.0d0 + 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+
+            Q(1,2) = (18.0d0 - dsqrt(30.0d0))/36.0d0 / 2.0d0
+            Q(2,2) = (18.0d0 + dsqrt(30.0d0))/36.0d0 / 2.0d0
+            Q(3,2) = (18.0d0 + dsqrt(30.0d0))/36.0d0 / 2.0d0
+            Q(4,2) = (18.0d0 - dsqrt(30.0d0))/36.0d0 / 2.0d0
+
+
+
+        case default 
+            print * , "order는 숫자여야하고, 7이하여야합니다. "
+        
+    end select
+
+    return 
+endsubroutine
+
+
+subroutine Get_Mass(Legendre_ord,Q,M)
+
+    implicit none 
+    integer, intent(in) :: Legendre_ord
+    double precision, intent(in) :: Q(1:6,1:2)
+    double precision, intent(out) :: M(0:Legendre_ord,0:Legendre_ord)
+
+    integer :: i , j 
+
+    double precision,external :: Le_poly
+
+    do i = 0,Legendre_ord
+        do j = 0,Legendre_ord
+            M(i,j)&
+            &= Le_poly(i,Q(1,1)) * Le_poly(j,Q(1,1)) * Q(1,2)&
+            &+ Le_poly(i,Q(2,1)) * Le_poly(j,Q(2,1)) * Q(2,2)&
+            &+ Le_poly(i,Q(3,1)) * Le_poly(j,Q(3,1)) * Q(3,2)&
+            &+ Le_poly(i,Q(4,1)) * Le_poly(j,Q(4,1)) * Q(4,2)&
+            &+ Le_poly(i,Q(5,1)) * Le_poly(j,Q(5,1)) * Q(5,2)&
+            &+ Le_poly(i,Q(6,1)) * Le_poly(j,Q(6,1)) * Q(6,2)
+
+            if (M(i,j).ge.1d-10) then
+                M(i,j) = 1.0d0/M(i,j)
+            else 
+                M(i,j) = 0.0d0 
+            endif 
+
+        enddo   
+    enddo
+
+    write(*,*) "===========================Mass matrix==========================="
+    do i=0,size(M,1)-1
+        write(*,*) real(M(i,:))
+    enddo
+
+    write(*,*) "================================================================="
+    write(*,*) " "
+    return
+endsubroutine
+
+
+double precision function Le_poly(ord, x) 
+    implicit none
+
+    integer,intent(in) :: ord 
+    double precision,intent(in) :: x 
+
+    select case(ord) 
+    case(0) 
+        Le_poly = 1 
+    case(1) 
+        Le_poly = x**1
+    case(2)
+        Le_poly = x**2 - (1.0d0/12.0d0) 
+    case(3) 
+        Le_poly = x**3 - (3.0d0 /20.0d0) * x 
+    case(4) 
+        Le_poly = (x**4) - ((3.0d0 / 14.0d0) * x**2) + (3.0d0 / 560.0d0)
+    end select
+
+endfunction

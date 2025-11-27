@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-debug",
+      "type": "shell",
+      "command": "powershell.exe",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$files = Get-ChildItem -Filter *.f90 | ForEach-Object { $_.Name }; gfortran -Og -g -Wall -Wextra -fcheck=all -fbacktrace $files -o app.exe"
+      ],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "run",
+      "type": "shell",
+      "command": "${workspaceFolder}\\app.exe",
+      "dependsOn": "build-debug"
+    }
+  ]
+}

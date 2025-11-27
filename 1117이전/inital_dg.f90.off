@@ -1,0 +1,435 @@
+program RKDG_WENO_SCALAR_LEGENDRE
+  implicit none
+
+  !Counters
+  integer :: ord !Index of the degree for Legendre polymomials
+  integer :: i !Spatial(x-axis) index
+  integer :: n !Time index
+
+  !Order of the discontinuous Galerkin method and polynomials
+  integer,parameter :: DG_ord=3 !Order of DG solver (2,3,4,5)
+  integer,parameter :: Legen_ord=DG_ord-1 !Order of polymomials (1,2,3,4)
+
+  !Useful constants
+  double precision,parameter :: pi=4.0d0*datan(1.0d0)
+  double precision,parameter :: CFL=0.5d0/dble(2*Legen_ord+1) !CFL number
+  double precision :: TVB_M !TVB constant
+
+  !Spatial variables
+  integer,parameter :: imax=50*(2**0) !Number of spatial cells
+  integer,parameter :: i_bc=2*Legen_ord+1 !Ghost boundary cells for WENO schemes
+  double precision,parameter :: x_left=-1.0d0 !Left boundary on x-axis
+  double precision,parameter :: x_right=1.0d0 !Right boundary on x-axis
+  double precision,parameter :: x_length=dabs(x_right-x_left) !Length of domain
+  double precision,dimension(-i_bc+1:imax+i_bc) :: x !Cell centers
+  double precision,dimension(-i_bc+1:imax+i_bc) :: dx !Cell volumes
+
+  !Variables for quadratures
+  double precision,dimension(1:6,1:2) :: Q 
+  
+  !Several functions
+  double precision,external :: Ini_u,Ext_u
+
+  !Legendre polynomials
+  double precision,external :: Le_poly
+
+  !Mass coefficient matrices
+  double precision,dimension(0:Legen_ord,0:Legen_ord) :: M
+
+  !Cell interface contributions
+  double precision,dimension(0:Legen_ord) :: l_b,r_b
+  
+  !Polynomial ideal weights 
+  double precision,dimension(0:Legen_ord,1:Legen_ord+2) :: d 
+
+  !Degrees of freedom in the moments by the L2 projection
+  double precision,dimension(0:Legen_ord,-i_bc+1:imax+i_bc) :: old_u 
+  double precision,dimension(0:Legen_ord,1:imax) :: new_u 
+
+  !Convex summation of degrees of freedom and Legendre polynommials 
+  double precision :: temp_sum
+  double precision,dimension(1:imax) :: sum_ext_u,sum_new_u
+
+  write(*,*) "================================================================="
+  write(*,*) "                    Calculations have started.                   "
+  write(*,*) "================================================================="
+  write(*,*) " "
+
+  !Set several initial settings
+  n=0
+  call Get_Quadrature(Legen_ord,Q)
+  call Get_Mass(Legen_ord,Q,M)
+  call Get_Spatial(i_bc,imax,x_left,x_length,x,dx)
+  call Get_Initial(Legen_ord,Q,M,i_bc,imax,x,dx,old_u,l_b,r_b)
+
+  !Set the TVB constant
+  !if TVB_M is chosen too small(<1.0d0), smooth cells will be declared troubled cells,
+  !so unnecessary WENO reconstructions will be appear.
+
+  !if TVB_M is chosen too large(>1.0d0), trouble cells will be declared smooth cells,
+  !so suprious oscillations will be appear.
+  TVB_M=1.0d0
+
+
+  !Compute various errors
+  write(*,*) "==========================Error results=========================="
+  call Get_L_2_Error(i_bc,imax,dx,sum_ext_u,sum_new_u)
+  call Get_L_Infty_Error(imax,sum_ext_u,sum_new_u)
+  write(*,*) "================================================================="
+  write(*,*) " "
+
+  write(*,*) "================================================================="
+  write(*,*) "                   Calculations have finished.                   "
+  write(*,*) "================================================================="
+  return
+endprogram
+
+
+subroutine Get_Quadrature(ord,Q)
+  implicit none
+  
+  integer,intent(in) :: ord
+
+  double precision,intent(out) :: Q(1:6,1:2)
+  !-------------------------Calculations have started--------------------------!
+
+  !Quadrature nodes and weights are scaled 
+  !for integrations on [-1.0d0/2.0d0,1.0d0/2.0d0]
+   
+  Q = 0.0d0 
+
+  if(ord.eq.1)then
+   !Nodes of 4th-order Gauss-Legendre quadrature
+	  Q(1,1)=dsqrt(3.0d0)/6.0d0
+	  Q(2,1)=-Q(1,1)
+
+   !Weights of 4th-order Gauss-Legendre quadrature
+	  Q(1,2)=1.0d0/2.0d0
+	  Q(2,2)=Q(1,2)
+
+  elseif(ord.eq.3)then
+   !Nodes of 6th-order Gauss-Lobatto quadrature
+	  Q(1,1)=1.0d0/2.0d0
+	  Q(2,1)=-Q(1,1)
+	  Q(3,1)=dsqrt(5.0d0)/10.0d0
+	  Q(4,1)=-Q(3,1)
+
+   !Weights of 6th-order Gauss-Lobatto quadrature
+	  Q(1,2)=1.0d0/12.0d0
+	  Q(2,2)=Q(1,2)
+	  Q(3,2)=5.0d0/12.0d0
+	  Q(4,2)=Q(3,2)
+
+  elseif(ord.eq.2)then
+   !Nodes of 8th-order Gauss-Legendre quadrature
+   	Q(1,1)=dsqrt(3.0d0/7.0d0+(2.0d0/7.0d0)*dsqrt(6.0d0/5.0d0))/2.0d0
+  	Q(2,1)=dsqrt(3.0d0/7.0d0-(2.0d0/7.0d0)*dsqrt(6.0d0/5.0d0))/2.0d0
+  	Q(3,1)=-Q(2,1)
+  	Q(4,1)=-Q(1,1)
+
+   !Weights of 8th-order Gauss-Legendre quadrature
+  	Q(1,2)=(18.0d0-dsqrt(30.0d0))/72.0d0
+  	Q(2,2)=(18.0d0+dsqrt(30.0d0))/72.0d0
+  	Q(3,2)=Q(2,2)
+  	Q(4,2)=Q(1,2)
+
+  elseif(ord.eq.4)then
+   !Nodes of 10th-order Gauss-Lobatto quadrature
+  	Q(1,1)=1.0d0/2.0d0
+  	Q(2,1)=-Q(1,1)
+  	Q(3,1)=dsqrt(147.0d0+42.0d0*dsqrt(7.0d0))/42.0d0
+  	Q(4,1)=-Q(3,1)
+  	Q(5,1)=dsqrt(147.0d0-42.0d0*dsqrt(7.0d0))/42.0d0
+    Q(6,1)=-Q(5,1)
+
+   !Weights of 10th-order Gauss-Lobatto quadrature
+  	Q(1,2)=1.0d0/30.0d0
+  	Q(2,2)=Q(1,2)
+  	Q(3,2)=-7.0d0+5.0d0*dsqrt(7.0d0)
+    Q(3,2)=Q(3,2)*dsqrt(7.0d0)*(7.0d0+dsqrt(7.0d0))/840.0d0
+  	Q(4,2)=Q(3,2)
+  	Q(5,2)=7.0d0+5.0d0*dsqrt(7.0d0)
+    Q(5,2)=Q(5,2)*dsqrt(7.0d0)/(7.0d0+dsqrt(7.0d0))/20.0d0
+    Q(6,2)=Q(5,2)
+  endif
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Mass(Legen_ord,Q,M)
+  implicit none
+  
+  integer,intent(in) :: Legen_ord
+  double precision,intent(in) :: Q(1:6,1:2) 
+
+  double precision,intent(out) :: M(0:Legen_ord,0:Legen_ord)
+ 
+  !Counters
+  integer :: ord_0,ord_1
+
+  !Legendre polynomials
+  double precision,external :: Le_poly
+  !-------------------------Calculations have started--------------------------!
+  
+  !Compute the inverse of the mass matrix
+  do ord_0=0,Legen_ord
+    do ord_1=0,Legen_ord
+      M(ord_0,ord_1)&
+      &=(Le_poly(ord_0,Q(1,1))*Le_poly(ord_1,Q(1,1)))*Q(1,2)&
+      &+(Le_poly(ord_0,Q(2,1))*Le_poly(ord_1,Q(2,1)))*Q(2,2)&
+      &+(Le_poly(ord_0,Q(3,1))*Le_poly(ord_1,Q(3,1)))*Q(3,2)&
+      &+(Le_poly(ord_0,Q(4,1))*Le_poly(ord_1,Q(4,1)))*Q(4,2)&
+      &+(Le_poly(ord_0,Q(5,1))*Le_poly(ord_1,Q(5,1)))*Q(5,2)&
+      &+(Le_poly(ord_0,Q(6,1))*Le_poly(ord_1,Q(6,1)))*Q(6,2)
+      
+      if(M(ord_0,ord_1).ge.1d-10)then
+  !Inversion  
+        M(ord_0,ord_1)=1.0d0/M(ord_0,ord_1)
+      else
+        M(ord_0,ord_1)=0.0d0
+      endif
+    enddo
+  enddo
+  
+  write(*,*) "===========================Mass matrix==========================="
+  do ord_0=0,size(M,1)-1
+    write(*,*) real(M(ord_0,:))
+  enddo
+  write(*,*) "================================================================="
+  write(*,*) " "
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Spatial(i_bc,imax,x_left,x_length,x,dx)
+  implicit none 
+
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: x_left,x_length
+  
+  double precision,intent(out) :: x(-i_bc+1:imax+i_bc),dx(-i_bc+1:imax+i_bc)
+
+  !Counter
+  integer :: i
+
+  !Calculation variable
+  double precision,dimension(0:imax) :: temp_x 
+  !-------------------------Calculations have started--------------------------!
+  
+  !Generate physical cell center locations and volumes of cells
+  do i=0,imax
+    temp_x(i)=x_left+dble(i)*dble(x_length/imax)
+  enddo
+  
+  do i=1,imax
+    x(i)=(temp_x(i)+temp_x(i-1))/2.0d0
+    dx(i)=dabs(temp_x(i)-temp_x(i-1))
+  enddo
+
+  !Generate ghost cell center locations and volumes of cells 
+  !for Lagrange interpolation at boundaries
+  do i=1,i_bc-1
+	  x(-i)=x(imax-i)-x_length
+    x(imax+i)=x(i)+x_length
+
+	  dx(-i)=dx(imax-i)
+	  dx(imax+i)=dx(i)
+	enddo
+  
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_Initial(Legen_ord,Q,M,i_bc,imax,x,dx,u_0,l_b,r_b)
+  implicit none
+  
+  integer,intent(in) :: Legen_ord
+  double precision,intent(in) :: Q(1:6,1:2) 
+  double precision,intent(in) :: M(0:Legen_ord,0:Legen_ord)
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: x(-i_bc+1:imax+i_bc),dx(-i_bc+1:imax+i_bc)
+
+  double precision,intent(out) :: u_0(0:Legen_ord,-i_bc+1:imax+i_bc)
+  double precision,intent(out) :: l_b(0:Legen_ord),r_b(0:Legen_ord)
+ 
+  !Counters
+  integer :: ord
+  integer :: i
+
+  !Initial data
+  double precision,external :: Ini_u
+
+  !Legendre polynomials
+  double precision,external :: Le_poly
+
+  !Calculation variables
+  double precision :: x_1,x_2,x_3,x_4,x_5,x_6
+  double precision :: temp_sum
+  double precision,dimension(1:imax) :: sum_u_0,exact_u_0
+  !-------------------------Calculations have started--------------------------!
+  
+  !Compute L2-projection of initial data into the finite element space
+  do i=1,imax
+  !Transform nodes by using the liner transform
+    x_1=x(i)+Q(1,1)*dx(i)
+    x_2=x(i)+Q(2,1)*dx(i)
+    x_3=x(i)+Q(3,1)*dx(i)
+    x_4=x(i)+Q(4,1)*dx(i)
+    x_5=x(i)+Q(5,1)*dx(i)
+    x_6=x(i)+Q(6,1)*dx(i)
+
+  !Compute degree of freedoms of initial data by using quadratures
+    do ord=0,Legen_ord
+      u_0(ord,i)=Ini_u(x_1)*Le_poly(ord,Q(1,1))*Q(1,2)&
+               &+Ini_u(x_2)*Le_poly(ord,Q(2,1))*Q(2,2)&
+               &+Ini_u(x_3)*Le_poly(ord,Q(3,1))*Q(3,2)&
+               &+Ini_u(x_4)*Le_poly(ord,Q(4,1))*Q(4,2)&
+               &+Ini_u(x_5)*Le_poly(ord,Q(5,1))*Q(5,2)&
+               &+Ini_u(x_6)*Le_poly(ord,Q(6,1))*Q(6,2)
+  
+  !Product the mass matrix for the orthonormalization                 
+      u_0(ord,i)=M(ord,ord)*u_0(ord,i)
+    enddo
+  enddo
+  
+  !Compute the convex summation by using calculated degrees of freedom
+  !((x(i)-x(i))/dx(i)=0.0d0: Cell center 
+  do i=1,imax
+    temp_sum=0.0d0
+    do ord=0,Legen_ord
+      temp_sum=temp_sum+u_0(ord,i)*Le_poly(ord,0.0d0)
+      sum_u_0(i)=temp_sum
+    enddo
+  enddo
+  !call Get_Result(i_bc,imax,x,sum_u_0)
+
+  !Set the exact solution of the initial function
+  do i=1,imax
+    exact_u_0(i)=Ini_u(x(i))
+  enddo
+  
+  write(*,*) "======================Initial error results======================"
+  call Get_L_2_Error(i_bc,imax,dx,exact_u_0,sum_u_0)
+  call Get_L_Infty_Error(imax,exact_u_0,sum_u_0)
+  write(*,*) "================================================================="
+  write(*,*) " "
+
+  !Compute cell interface contributions
+  !((x(i)-dx(i)/2.0d0)-x(i))/dx(i)=-1.0d0/2.0d0: Left cell interface
+  !((x(i)+dx(i)/2.0d0)-x(i))/dx(i)=+1.0d0/2.0d0: Right cell interface
+  do ord=0,Legen_ord
+    l_b(ord)=Le_poly(ord,-1.0d0/2.0d0)
+    r_b(ord)=Le_poly(ord,+1.0d0/2.0d0)
+  enddo
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+
+
+subroutine Get_L_1_Error(i_bc,imax,dx,exact,numerical)
+  implicit none
+
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: dx(1-i_bc+1:imax+i_bc)
+  double precision,intent(in) :: exact(1:imax),numerical(1:imax)
+
+  !Counter
+  integer :: i
+
+  !Error calculation variables
+  double precision,dimension(1:imax) :: e
+  !-------------------------Calculations have started--------------------------!
+
+  !Compute absolute differences
+  do i=1,imax
+    e(i)=dabs(exact(i)-numerical(i))
+    e(i)=e(i)*dx(i)
+  enddo
+
+  !Compute the average sum
+  write(*,*) "L_1 error:",sum(e)
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_L_2_Error(i_bc,imax,dx,exact,numerical)
+  implicit none
+
+  integer,intent(in) :: i_bc,imax
+  double precision,intent(in) :: dx(-i_bc+1:imax+i_bc)
+  double precision,intent(in) :: exact(1:imax),numerical(1:imax)
+
+  !Counter
+  integer :: i
+
+  !Error calculation variables
+  double precision,dimension(1:imax) :: e
+  !-------------------------Calculations have started--------------------------!
+
+  !Compute square differences
+  do i=1,imax
+    e(i)=(exact(i)-numerical(i))**2
+    e(i)=e(i)*dx(i)
+  enddo
+
+  !Compute the square root average sum
+  write(*,*) "L_2 error:",dsqrt(sum(e))
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine Get_L_Infty_Error(imax,exact,numerical)
+  implicit none
+
+  integer,intent(in) :: imax
+  double precision,intent(in) :: exact(1:imax),numerical(1:imax)
+
+  !Counters
+  integer :: i
+
+  !Error calculation variables
+  double precision,dimension(1:imax) :: e
+  !-------------------------Calculations have started--------------------------!
+
+  !Compute absolute differences
+  do i=1,imax
+    e(i)=dabs(exact(i)-numerical(i))
+  enddo
+
+  !Take the maximum value
+  write(*,*) "L_infty error:",maxval(e)
+  write(*,*) "Maximum error location:",maxloc(e)
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+double precision function Le_poly(ord,x)
+  implicit none
+
+  integer,intent(in) :: ord
+  double precision,intent(in) :: x
+  !-------------------------Calculations have started--------------------------!
+   
+  !Set up scaled-Legendre polynomials
+  if(ord.eq.0)then
+	  Le_poly=x**0
+  elseif(ord.eq.1)then
+    Le_poly=x**1
+  elseif(ord.eq.2)then
+    Le_poly=x**2-(1.0d0/12.0d0)
+  elseif(ord.eq.3)then
+    Le_poly=x**3-(3.0d0/20.0d0)*x
+  elseif(ord.eq.4)then
+    Le_poly=x**4-(3.0d0/14.0d0)*x**2+3.0d0/560.0d0
+  endif
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endfunction

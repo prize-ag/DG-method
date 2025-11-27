@@ -1,0 +1,728 @@
+program youn
+
+    implicit none 
+    ! DG ORDER 
+    
+    integer :: i ,ord! 현재 데이터 가져갈 때 필요한 인덱스
+    integer :: n = 0 ! 시간 인덱스 
+
+    integer,parameter :: Dg_ord =3 ! 우리의 목표 차수 
+    integer,parameter :: Legendre_ord = Dg_ord-1 
+
+    ! Useful parameter 
+    double precision,parameter :: pi = 4.0d0*datan(1.0d0)  
+    ! 이거 두개는 뭔지 아직 모름.. 필요한가? 
+    double precision,parameter :: CFL=0.5d0/dble(2*Legendre_ord+1) !CFL number
+    !double precision :: TVB_M = 1.0d0 !TVB constant
+
+
+    !Spatial variables
+    integer,parameter :: imax=50*(2**0) !Number of spatial cells
+    integer,parameter :: ghost = 3 
+
+
+    double precision,parameter :: x_left=-1.0d0 !Left boundary on x-axis
+    double precision,parameter :: x_right=1.0d0 !Right boundary on x-axis
+    !double precision,parameter :: x_length=dabs(x_right-x_left) !Length of domain
+
+    double precision,dimension(1 - ghost : imax + ghost) :: x !Cell centers
+    double precision,dimension(1 - ghost : imax + ghost) :: dx !Cell volumes
+    double precision,dimension(1 - ghost : imax + ghost) :: sum_u_0
+
+    !Time variables
+    integer :: RK_ord !Order of Runge-Kutta solver
+    integer,parameter :: nmax=999999999 !Number of the marching step
+    !Final time of the solution 이라는데 이게 뭐지? 엄청 작은 숫자인데... 
+    double precision,parameter :: time_out=1d-20 
+    double precision :: dt  !Time step  ! 일단 임의로 내가 설정 
+    double precision :: flag_0,flag_1 !Time flags ! flag는 뭐하는거지? 
+
+
+    !Cpu time checkers 이건 어디다가 쓰는 걸까나..?
+    integer :: rate,time_0
+
+    ! 아마 이 u_0 가 dof 즉, 계수임 
+    double precision,dimension(1:imax,0:Legendre_ord) :: old_u_0 ,new_u_0
+
+    !Cell interface contributions --> 벡터들인데, 뭐지 이게
+    double precision,dimension(0:Legendre_ord) :: l_b,r_b
+
+    !Polynomial ideal weights --> 이건 행열인데 뭐지 ㅣㅇ게 이거 weno  관련일듯! 즉, limiter 
+    ! double precision,dimension(0:Legendre_ord,1:Legendre_ord+2) :: d 
+
+    double precision,dimension(1:6,1:2) :: Q ! 쿼드락쳐 노드 
+    double precision,dimension(0:Legendre_ord,0:Legendre_ord) :: M ! mass matrix 
+
+    double precision, external :: Ini_u, Ext_u ! 초기 데이터 
+    double precision,external :: Le_poly ! 르잔드르 다항식 
+
+
+
+    write(*,*) " "
+    write(*,*) "**   윤상은 practice   **"
+    write(*,*) " "
+    write(*,*) " "
+
+    ! 여기 있는 flag들은 뭐지 ㅎ 
+    n=0
+    flag_0=0.0d0
+    flag_1=0.0d0
+
+    call Get_Quadrature(7,Q)
+    call Get_Mass(Legendre_ord,Q,M)
+    call Get_Spatial(imax, ghost, x_left,x_right,x,dx)
+    call Get_Initial(Legendre_ord,Q,M, ghost, imax,x,dx,old_u_0,sum_u_0,l_b,r_b)
+
+    RK_ord = Dg_ord
+
+    open(0,file='Density(Exact).plt')
+    open(1,file='Density(Numerical).plt')
+    
+    write(0,*)'zone T="file"', 'I=',imax
+    write(1,*)'zone T="file"', 'I=',imax
+
+    
+    call system_clock(count_rate=rate)
+    call system_clock(count = time_0)
+
+    do while (flag_0 < time_out)
+        ! 이 dt도 어떻게 처리할 지 생각해야함 일단은 그냥 넣고 생각하겠음.
+        dt = 0.1 
+
+        ! 여기에 rk 사용해야함! 
+        ! Runge–Kutta 단계 수행
+        call Get_RK(RK_ord, Legendre_ord, Q, M, l_b, r_b, ghost, imax, x, dx, dt,old_u_0, new_u_0)
+
+        ! 시간 업데이트
+        flag_1 = flag_0 + dt
+        flag_0 = flag_1
+
+        ! 새 값 받아오기
+        do i = 1, imax
+            do ord = 0, Legendre_ord
+                old_u_0(i, ord) = new_u_0(i, ord)
+            enddo
+        enddo
+
+        n = n + 1
+
+        ! 수렴 또는 종료 시간 체크
+        if (flag_0 >= time_out) exit
+    enddo 
+
+endprogram
+
+
+! 적분할때, 노드의 위치와 가중치들을 알려주는 함수
+! ord에 따라서 노드와 가중치가 달라진다. 
+! 박사님 --> scaled 된 걸 사용 왜그랬을까? 
+! 일단 나도 scaled 된걸 사용하겠다. 
+! ord --> 사용하는 점의 개수 
+! 즉 점이 n개면 2n-1차 다항식까지 완벽하게 표현 가능! 
+
+! 왜 박사님은 -1/2 에서 1/2 로 scaled 된 걸 사용했을까..? !!!!!!!!!!!!!!!!!!!!!!
+subroutine Get_Quadrature(ord,Q) 
+
+    implicit none
+
+    integer,intent(in) :: ord 
+
+    double precision,intent(out) ::Q(1:6,1:2)
+
+    Q = 0.0d0
+    
+    select case(ord)
+
+        ! case 2 3 4 는 가우시안 쿼드락쳐 를 사용한 것 
+        ! 2 3 4 는 각각 점의 개수 
+        case (2) 
+            Q(1,1) = -dsqrt(3.0d0) / 3.0d0 / 2.0d0
+            Q(2,1) = +dsqrt(3.0d0) / 3.0d0 / 2.0d0
+            
+            Q(1,2) = 1.0d0 / 2.0d0
+            Q(2,2) = 1.0d0 / 2.0d0
+
+        case (3) 
+            Q(1,1) = -dsqrt(15.0d0) / 5.0d0 / 2.0d0
+            Q(2,1) = 0.0d0
+            Q(3,1) = +dsqrt(15.0d0) / 5.0d0 / 2.0d0
+
+            Q(1,2) = 5.0d0 / 9.0d0 / 2.0d0
+            Q(2,2) = 8.0d0 / 9.0d0 / 2.0d0
+            Q(3,2) = 5.0d0 / 9.0d0 / 2.0d0
+
+        case(4) 
+            Q(1,1) = -dsqrt(3.0d0 / 7.0d0 + 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+            Q(2,1) = -dsqrt(3.0d0 / 7.0d0 - 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+            Q(3,1) = +dsqrt(3.0d0 / 7.0d0 - 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+            Q(4,1) = +dsqrt(3.0d0 / 7.0d0 + 2.0d0 / 7.0d0 * dsqrt(6.0d0 / 5.0d0)) / 2.0d0
+
+            Q(1,2) = (18.0d0 - dsqrt(30.0d0))/36.0d0 / 2.0d0
+            Q(2,2) = (18.0d0 + dsqrt(30.0d0))/36.0d0 / 2.0d0
+            Q(3,2) = (18.0d0 + dsqrt(30.0d0))/36.0d0 / 2.0d0
+            Q(4,2) = (18.0d0 - dsqrt(30.0d0))/36.0d0 / 2.0d0
+
+        case(5) 
+            !점 4개를 사용하는 가우시안 로바또 쿼드락쳐 
+            Q(1,1) = -1.0d0/2.0d0
+            Q(2,1) = -dsqrt(5.0d0)/5.0d0 / 2
+            Q(3,1) = +dsqrt(5.0d0)/5.0d0 / 2
+            Q(4,1) = +1.0d0/2.0d0
+
+            Q(1,2) = 1.0d0/12.0d0
+            Q(2,2) = 5.0d0/12.0d0
+            Q(3,2) = 5.0d0/12.0d0
+            Q(4,2) = 1.0d0/12.0d0
+
+        case(6)  ! 노드 5개 가우시안 로바또 
+            Q(1,1) = -1.0d0/2.0d0
+            Q(2,1) = -sqrt(5.0d0/7.0d0) / 2.0d0
+            Q(3,1) =  0.0d0
+            Q(4,1) = +sqrt(5.0d0/7.0d0) / 2.0d0
+            Q(5,1) = +1.0d0/2.0d0
+
+            Q(1,2) = 1.0d0/20.0d0
+            Q(2,2) = 49.0d0/90.0d0
+            Q(3,2) = 64.0d0/90.0d0
+            Q(4,2) = 49.0d0/90.0d0
+            Q(5,2) = 1.0d0/20.0d0
+
+        case(7) 
+            Q(1,1) = -1.0d0/2.0d0
+            Q(2,1) = -dsqrt(147.0d0 + 42.0d0*dsqrt(7.0d0)) / 42.0d0
+            Q(3,1) = -dsqrt(147.0d0 - 42.0d0*dsqrt(7.0d0)) / 42.0d0
+            Q(4,1) =  dsqrt(147.0d0 - 42.0d0*dsqrt(7.0d0)) / 42.0d0
+            Q(5,1) =  dsqrt(147.0d0 + 42.0d0*dsqrt(7.0d0)) / 42.0d0
+            Q(6,1) =  1.0d0/2.0d0
+
+
+            Q(1,2) = 1.0d0/30.0d0
+            Q(2,2) = dsqrt(7.0d0)*(7.0d0 + dsqrt(7.0d0)) * (-7.0d0 + 5.0d0*dsqrt(7.0d0)) / 840.0d0
+            Q(3,2) = dsqrt(7.0d0) * (7.0d0 - dsqrt(7.0d0)) * (7.0d0 + 5.0d0*dsqrt(7.0d0)) / 840.0d0
+            Q(4,2) = Q(3,2)
+            Q(5,2) = Q(2,2)
+            Q(6,2) = Q(1,2)
+
+        case default 
+            print * , "order는 숫자여야하고, 7이하여야합니다. "
+        
+    end select
+
+    return 
+endsubroutine
+
+
+subroutine Get_Mass(Legendre_ord,Q,M)
+
+    implicit none 
+    integer, intent(in) :: Legendre_ord
+    double precision, intent(in) :: Q(1:6,1:2)
+    double precision, intent(out) :: M(0:Legendre_ord,0:Legendre_ord)
+
+    integer :: i , j ,k 
+
+    double precision,external :: Le_poly
+
+    M = 0.0d0 
+
+    ! -1/2에서 1/2 구간에서의 질량 행열 
+
+    do i = 0,Legendre_ord
+        do j = 0,Legendre_ord
+            do k = 1,6
+                M(i,j) = M(i,j) + Le_poly(i,Q(k,1)) * Le_poly(j,Q(k,1)) * Q(k,2)
+            enddo
+
+            if (M(i,j) > 1d-10) then
+                M(i,j) = 1.0d0 / M(i,j)
+            else 
+                M(i,j) = 0.0d0 
+            endif 
+        enddo   
+    enddo
+
+    write(*,*) "===========================Mass matrix==========================="
+    do i=0,Legendre_ord
+        write(*,'(4G16.6)') M(i,:)
+    enddo
+    write(*,*) "================================================================="
+    write(*,*) " "
+    
+    return
+endsubroutine
+
+
+! ghost는 바운더리에서 근사할때 만들 필요가 있어서 필요한 거 (ghost cell) --> 나중에! 
+! imax는 셀의 개수!!!!! 
+
+! 즉 우리는 셀를 imax개로 쪼갤 거다!! 
+
+
+subroutine Get_Spatial(imax, ghost, x_left,x_right,x,dx)
+    implicit none 
+
+    integer,intent(in) :: imax ,ghost
+
+    double precision,intent(in) :: x_left,x_right
+
+    double precision,intent(out) :: x(1 - ghost :imax + ghost) , dx(1 - ghost :imax + ghost )
+    
+    double precision :: x_length
+    
+    
+    integer :: i 
+
+    double precision,dimension(0:imax) :: temp_x 
+
+    x_length = x_right - x_left
+    ! 이 것은 정말 물리적인 공간만 나눠놓음! 
+    ! temp_x(i) temp_x(i+1) 은 좌우 구간의 값임! 
+    ! 지금 그리고, 균일하게 나눠놓음! 
+
+    do i = 0,imax 
+        temp_x(i) = x_left + dble(i) * dble(x_length)/dble(imax)
+    enddo
+    ! x는 각 셀의 중간을 의미함! x(i)는 i 번째 셀의 가운데를 의미 
+    ! dx는 각 셀의 크기! dx(i)는 i번째 셀의 크기 
+    do i = 1,imax
+        x(i)= (temp_x(i-1) + temp_x(i))/2.0d0
+        dx(i) = dabs(temp_x(i)-temp_x(i-1))
+    enddo
+    
+    ! 고스트 셀
+    do i = 1 - ghost , 0  
+        x(i) =   x(imax - i) - x_length 
+        dx(i) =  dx(imax -i)
+    enddo 
+
+    do i = 1 , ghost 
+        x (imax + i) = x(i) + x_length 
+        dx(imax + i) = dx(i) 
+    enddo 
+
+    return
+endsubroutine
+
+
+
+! 무엇이 필요할까? 
+! 초기 조건이 필요하지 않을까? 
+subroutine Get_Initial(Legendre_ord, Q, M, ghost, imax, x, dx, u_0,sum_u_0,l_b,r_b)
+
+    implicit none
+    integer, intent(in) :: Legendre_ord
+    
+    double precision,intent(in) :: Q(1:6,1:2) 
+    double precision,intent(in) :: M(0:Legendre_ord,0:Legendre_ord)
+    integer,intent(in) :: imax , ghost
+
+    double precision,intent(in) :: x (1 - ghost : imax + ghost ) 
+    double precision,intent(in) :: dx(1 - ghost :imax + ghost ) 
+
+    double precision,external :: Le_poly
+    double precision,external :: Ini_u
+
+    double precision,intent(out) :: u_0(1:imax,0:Legendre_ord)
+    double precision,intent(out) :: sum_u_0(1:imax)  
+    double precision,intent(out) :: l_b(0:Legendre_ord), r_b(0:Legendre_ord)
+
+    double precision,dimension(1:imax) :: exact_u_0
+
+    double precision,dimension(1:6) :: xq 
+    double precision ::  temp_sum
+    integer :: i ,j ,k , r
+
+    u_0 = 0.0d0
+
+    !! 여기 double do 문은 계수(dof) 만드는 작업 
+    ! 여기서 i 인덱스는 셀의 순서를 이야기한다. (몇번 째 셀인지!)
+    do i = 1 , imax 
+        ! 이 작업은 내가 가지고 있는 quadrature 노드를 셀로 이동시키는 부분 
+        ! 즉, 각 셀에서 quadrature 노드는 이제 xq 이다!! 
+        do k = 1,6
+            xq(k) =  dx(i) * Q(k,1) + x(i) 
+        enddo
+
+        ! j 인덱스는 order를 의미함 .
+        ! degree of freedom에서는 order와 구간별(cell)로 dof를 정하므로, 인덱스가 2개 필요하다. 
+        
+        do j = 0 , Legendre_ord
+            do r = 1,6 
+                u_0(i,j) = u_0(i,j) + Ini_u(xq(r)) * Le_poly(j,Q(r,1)) * Q(r,2) 
+                ! weight를 바꾸야하지 않나..? 자코비안 곱해야할 것 같은데.... & 노드를 그냥 원래 노드를 넣어도 될까? 
+                ! --> 무척 신기하네.. 다 포함되어 있는 것임... Q(1,2)를 넣으므로 써 자코비안이 이미 곱해진 형태를 가지고 있다. 
+            enddo
+
+            u_0(i,j) = u_0(i,j) * M(j,j)
+        enddo
+    enddo
+
+    ! 실제 우리가 구하고 싶은 거 만들기 
+    do i =1,imax 
+        temp_sum = 0.0d0 ! 셀마다 리셋시키는 용도 
+
+        do j = 0, Legendre_ord
+            temp_sum  = temp_sum + u_0(i,j) * Le_poly( j , 0.0d0 )   ! 왜 르잔드르 다항식에서 x 값을 0 이라고 두었을까..? --> 셀 중간 값을 비교할 것이므로, 그걸 원래 것으로 가지고 오면 0이므로!!! 
+        enddo
+        ! sum_u_0 은 cell i 에서 초기 값을 사영한 것! (결과물)
+        sum_u_0(i) = temp_sum
+    enddo
+
+    ! 실제 값 만들기!!!! ---> 우리는 비교를 할건데, 어떻게 비교를 할 것이냐면~ 셀 중간값(x(i))에 값을 찍고, 그걸 사영한 다음에 잘 사영되어있는 지를 볼 것이다. 
+    do i = 1 , imax 
+        exact_u_0(i) = Ini_u(x(i))
+    enddo 
+
+    write(*,*) "======================Initial error results======================"
+    call Get_L2_Error(imax,dx,exact_u_0,sum_u_0)
+     write(*,*) "================================================================="
+    write(*,*) " "
+    ! 여기 왜 이렇게 하는거지? 
+    ! 왜 ord 별로 interface 값을 저장하지? 
+    do j = 0 , Legendre_ord
+
+        l_b(j) = Le_poly(j , -1.0d0/2.0d0)
+        r_b(j) = Le_poly(j , +1.0d0/2.0d0)
+    enddo
+
+    return
+endsubroutine
+
+subroutine Get_Boundary(Legendre_ord,ghost,imax,u)
+    implicit none
+    
+    integer,intent(in) :: Legendre_ord
+    integer,intent(in) :: ghost,imax
+
+    double precision,intent(inout) :: u(-ghost+1:imax+ghost,0:Legendre_ord)
+
+    !Counters
+    integer :: ord
+    integer :: i
+  !-------------------------Calculations have started--------------------------!
+
+  !Apply periodic conditions to ghost cells
+    do i=1,ghost
+
+        do ord=0,Legendre_ord 
+
+        u(-i+1,ord)=u(imax-i+1,ord)
+        u(imax+i,ord)=u(i,ord)
+
+        enddo
+    enddo
+
+    return
+  !-------------------------Calculations have finished-------------------------!
+endsubroutine
+
+subroutine GEt_Ready_RK(Legendre_ord,Q,M,l_b,r_b,ghost,imax,dx,u,F_Flux)
+
+    implicit none 
+
+    double precision,intent(in) :: M(0:Legendre_ord,0:Legendre_ord)
+    double precision,intent(in) :: l_b(0:Legendre_ord),r_b(0:Legendre_ord)
+    integer,intent(in) :: ghost ,imax
+    double precision,intent(in) :: dx(-ghost+1:imax+ghost)
+    double precision,intent(in) ::  Q(1:6,1:2)
+    integer, intent(in) :: Legendre_ord 
+
+    double precision,intent(inout) :: u(-ghost+1:imax+ghost,0:Legendre_ord)
+
+    double precision,intent(out) :: F_Flux(1:imax,0:Legendre_ord)
+
+
+    ! index 
+    integer :: i , ord ,k
+
+    !Flux function
+    double precision,external :: Flux
+
+    !Legendre polynomials
+    double precision,external :: Le_poly,D_Le_poly
+
+    !Cell interface values
+    double precision :: temp
+    double precision,dimension(0:imax+1) :: u_m
+    
+    !Flux splitting variables
+    double precision :: F_max
+    double precision,dimension(0:imax) :: hat_F
+
+    !Boundary integration variable
+    double precision,dimension(1:imax,0:Legendre_ord) :: F_Flux_B
+
+    !Volume integration variables
+    double precision :: uh(1:6)
+    double precision,dimension(1:imax,0:Legendre_ord) :: F_Flux_V 
+
+    !Lagrange polynomials
+    double precision,external :: Lag_P
+    ! 
+
+    ! 이 부분이 지금 적분(j번째 셀) f(uh) * d legendre 한거!! 
+    do i = 1, imax
+        ! (1) 먼저 적분점에서 u_h(x_q) 계산
+        uh(1:6) = 0.0d0
+        do k = 1, 6
+            do ord = 0, Legendre_ord
+                uh(k) = uh(k) + u(i, ord) * Le_poly(ord, Q(k,1))
+            enddo
+        enddo
+
+        ! (2) 이제 완성된 uh(k)를 써서 적분
+        do ord = 0, Legendre_ord
+            F_Flux_V(i, ord) = 0.0d0
+            do k = 1, 6
+                F_Flux_V(i, ord) = F_Flux_V(i, ord) + &
+                    Flux(uh(k)) * D_Le_poly(ord, Q(k,1)) * Q(k,2)
+            enddo
+        enddo
+    enddo
+
+    call Get_Boundary(Legendre_ord,ghost,imax,u)
+
+    !For given degrees of freedom, compute convex summations at cell interfaces
+    do i= 0, imax+1
+    !Left limit (-) at the right boundary 
+        temp= 0.0d0
+
+        do ord=0,Legendre_ord
+            temp= temp + u(i, ord) * r_b(ord)
+        enddo
+
+        u_m(i+0) = temp
+
+    !   hat_F(i) = u_m(i) 
+    enddo
+
+    F_max=1.0d0
+    do i=0,imax
+      hat_F(i)=Flux(u_m(i)) ! +Flux(u_p(i))
+      hat_F(i)=(hat_F(i)+F_max*u_m(i))/2.0d0 ! (u_m(i)-u_p(i)))/2.0d0
+    enddo
+    
+
+    do i=1,imax
+        do ord=0,Legendre_ord  
+            ! 그냥 hat_F(i) 라고 해도 되는데, gpt가 이게 더 안전하다고 ..ㅎ
+            F_Flux_B(i,ord) = hat_F(i-1)*l_b(ord) - hat_F(i)*r_b(ord)
+        enddo
+    enddo
+
+    
+    do i=1,imax
+        do ord=0,Legendre_ord
+            F_Flux(i,ord)=M(ord,ord)*(F_Flux_B(i,ord)+F_Flux_V(i,ord))/dx(i)
+        enddo
+    enddo
+
+
+    ! do i=1,imax
+    !     do ord=0,Legendre_ord
+    !         write(*,*) i, real(F_Flux_V(i, ord)), real(F_Flux_B(i,ord))
+    !     enddo
+    ! enddo
+
+
+    ! stop
+
+
+    return
+endsubroutine
+
+subroutine Get_RK(RK_ord,Legendre_ord,Q,M,l_b,r_b,ghost,imax,x,dx,dt&
+                                                           &,old_u,new_u)
+    implicit none
+    
+    integer,intent(in) :: RK_ord 
+    !double precision,intent(in) :: TVB_M
+    integer,intent(in) :: Legendre_ord
+    double precision,intent(in) :: Q(1:6,1:2) 
+    double precision,intent(in) :: M(0:Legendre_ord,0:Legendre_ord)
+    !double precision,intent(in) :: d(0:Legendre_ord,1:Legendre_ord+3)
+    double precision,intent(in) :: l_b(0:Legendre_ord),r_b(0:Legendre_ord)
+    integer,intent(in) :: ghost,imax
+    double precision,intent(in) :: x(-ghost+1:imax+ghost),dx(-ghost+1:imax+ghost)
+    double precision,intent(in) :: dt
+    double precision,intent(inout) :: old_u(0:Legendre_ord,-ghost+1:imax+ghost)
+
+    double precision,intent(out) :: new_u(0:Legendre_ord,1:imax)
+
+    !Counters
+    integer :: ord
+    integer :: i
+
+    !Calculation variables
+    double precision,dimension(-ghost+1:imax+ghost,0:Legendre_ord,1:3) :: temp_u
+    double precision,dimension(1:imax,0:Legendre_ord) :: F_Flux
+    if (RK_ord == 3) then
+        call GEt_Ready_RK(Legendre_ord,Q,M,l_b,r_b,ghost,imax,dx,old_u,F_Flux)
+
+        do i=1,imax
+        do ord=0,Legendre_ord
+            temp_u(i,ord,1)=+1.0d0*old_u(i,ord)&
+                        &+1.0d0*dt*F_Flux(i,ord)
+        enddo
+        enddo
+
+        !============================================================================!
+        !============================================================================!
+
+        !============================================================================!
+        !Stage 2
+        !============================================================================!
+
+        !Compute the residual
+        call GEt_Ready_RK(Legendre_ord,Q,M,l_b,r_b,ghost,imax,dx,old_u,F_Flux)
+
+            do i=1,imax
+                do ord=0,Legendre_ord
+                    temp_u(i,ord,2)=+3.0d0*old_u(i,ord)&
+                                    &+1.0d0*temp_u(i,ord,1)&
+                                    &+1.0d0*dt*F_Flux(i,ord)
+                    temp_u(i,ord,2)=temp_u(i,ord,2)/4.0d0
+                enddo
+            enddo
+
+        !============================================================================!
+        !============================================================================!
+
+        !============================================================================!
+        !Stage 3
+        !============================================================================!
+
+        !Compute the residual
+        call GEt_Ready_RK(Legendre_ord,Q,M,l_b,r_b,ghost,imax,dx,old_u,F_Flux)
+
+        do i=1,imax
+            do ord=0,Legendre_ord
+                new_u(i,ord)=+1.0d0*old_u(i,ord)&
+                            &+2.0d0*temp_u(i,ord,2)&
+                            &+2.0d0*dt*F_Flux(i,ord)
+                new_u(i,ord)=new_u(i,ord)/3.0d0
+            enddo
+        enddo
+    endif
+    
+    return
+
+endsubroutine
+
+
+
+
+subroutine Get_L2_Error(imax,dx,exact,numerical)
+    implicit none
+
+    integer,intent(in) :: imax 
+    double precision,intent(in) :: dx(1:imax)
+    double precision,intent(in) :: exact(1:imax), numerical(1:imax) 
+    double precision :: Error 
+    
+    integer :: i 
+    double precision,dimension(1:imax) :: temp_dif
+
+    do i = 1, imax  
+
+        temp_dif(i) = (exact(i) - numerical(i))**2
+        temp_dif(i) = temp_dif(i) *dx(i)  ! 적분해야하므로, 구간을 곱해서 면적을 구해준다. 
+    enddo
+
+    Error = dsqrt(sum(temp_dif)) 
+
+    write(*,*) " L2 Error :  " , Error 
+
+    return
+endsubroutine   
+
+
+double precision function Ini_u(x) 
+    implicit none 
+
+    double precision,intent(in) :: x 
+
+    ! Useful constant
+    double precision,parameter :: pi=4.0d0*datan(1.0d0)
+
+    ! smooth function 
+    Ini_u = dsin(pi*x) 
+    ! Ini_u = dexp(x)
+
+    ! non-smooth function
+    !if (x < -0.5d0 .or. x >0.5d0) then   
+    !    Ini_u = 0.0d0
+    !else   
+    !    Ini_u = 1.0d0
+    !endif
+
+
+    return
+endfunction
+
+double precision function Flux(u)
+  implicit none
+
+  double precision,intent(in) :: u
+  !-------------------------Calculations have started--------------------------!
+  
+  !Set up the flux
+  ! advection 이므로 지금은 u!  심지어 속도가 1인걸로 설정~ 
+  Flux =   1 * u  
+
+  return
+  !-------------------------Calculations have finished-------------------------!
+endfunction
+
+! 르잔드르 다항식 근데 구간이 -1/2 에서 1/2 로 스케일드 되어 있음! 
+double precision function Le_poly(ord, x) 
+    implicit none
+
+    integer,intent(in) :: ord 
+    double precision,intent(in) :: x 
+
+    select case(ord) 
+    case(0) 
+        Le_poly = 1 
+    case(1) 
+        Le_poly = x**1
+    case(2)
+        Le_poly = x**2 - (1.0d0/12.0d0) 
+    case(3) 
+        Le_poly = x**3 - (3.0d0 /20.0d0) * x 
+    case(4) 
+        Le_poly = (x**4) - ((3.0d0 / 14.0d0) * x**2) + (3.0d0 / 560.0d0)
+    case default 
+        Le_poly = 0.0d0
+    end select
+
+    return
+
+endfunction
+
+double precision function D_Le_poly(ord, x)
+    implicit none
+
+    integer, intent(in) :: ord
+    double precision, intent(in) :: x
+
+    !-------------------------Calculations have started--------------------------!
+
+    select case (ord)
+    case (0)
+        D_Le_poly = 0.0d0
+    case (1)
+        D_Le_poly = 1.0d0
+    case (2)
+        D_Le_poly = 2.0d0 * x
+    case (3)
+        D_Le_poly = 3.0d0 * x**2 - (3.0d0 / 20.0d0)
+    case (4)
+        D_Le_poly = 4.0d0 * x**3 - (3.0d0 / 7.0d0) * x
+    case default
+        D_Le_poly = 0.0d0
+    end select
+
+    return
+    !-------------------------Calculations have finished--------------------------!
+endfunction 
