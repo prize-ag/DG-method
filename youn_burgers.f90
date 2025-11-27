@@ -955,6 +955,9 @@ double precision function Ini_u(x)
   !-------------------------Calculations have finished-------------------------!
 endfunction
 
+!! 나 이부분에 새롭게 버거스 실제해 다시 만들어야함!! 해보자!! 
+
+
 ! 버거스에 대해서는 exact이 없는데 어떻게 설정하지? 
 ! gpt 가 만들어줌! 
 double precision function Ext_u(x, time_out)
