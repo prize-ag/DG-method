@@ -17,7 +17,7 @@
     double precision :: TVB_M !TVB constant
 
     !Spatial variables
-    integer,parameter :: imax= 40 * (2 ** 0) !Number of spa tial cells
+    integer,parameter :: imax= 1280 * (2 ** 0) !Number of spa tial cells
     integer,parameter :: i_bc = 2 * Legen_ord + 1 !Ghost boundary cells for WENO schemes
     double precision,parameter :: x_left  = -1.0d0 !Left boundary on x-axis
     double precision,parameter :: x_right =  1.0d0 !Right boundary on x-axis
@@ -28,9 +28,9 @@
     !Time variables
     integer :: RK_ord !Order of Runge-Kutta solver
     integer,parameter :: nmax = 999999999 !Number of the marching step
-    !double precision,parameter :: time_out = 0.3d0 !Final time of the solution
+    double precision,parameter :: time_out = 0.3d0 !Final time of the solution
     !double precision,parameter :: time_out = 2.0d0 /  dble(pi) !Final time of the solution
-    double precision,parameter :: time_out = 1.1d0 !Final time of the solution
+    ! double precision,parameter :: time_out = 1.1d0 !Final time of the solution
 
     double precision :: dt !Time step size
     double precision :: flag_0,flag_1 !Time flags
@@ -86,8 +86,8 @@
     
     RK_ord=DG_ord
 
-    open(0,file='Density(Exact).plt')
-    open(1,file='Density(Numerical).plt')
+    ! open(0,file='Density(Exact).plt')
+    open(1,file='Density(Numerical_1280).plt')
 
     
     call system_clock(count_rate = rate)
@@ -146,19 +146,19 @@
     write(*,*) "================================================================="
     write(*,*) " "
 
-    !Set up the exact solution
-    do i=1,imax
-        sum_ext_u(i)=Ext_u(x(i),time_out)
-        write(0,*) x(i),sum_ext_u(i)
-    enddo
+    ! !Set up the exact solution
+    ! do i=1,imax
+    !     sum_ext_u(i)=Ext_u(x(i),time_out)
+    !     write(0,*) x(i),sum_ext_u(i)
+    ! enddo
 
-    close(0)
+    ! close(0)
     close(1)
 
     !Compute various errors
     write(*,*) "==========================Error results=========================="
-    call Get_L_2_Error(i_bc,imax,dx,sum_ext_u,sum_new_u)
-    call Get_L_Infty_Error(imax,sum_ext_u,sum_new_u)
+    ! call Get_L_2_Error(i_bc,imax,dx,sum_ext_u,sum_new_u)
+    ! call Get_L_Infty_Error(imax,sum_ext_u,sum_new_u)
     write(*,*) "================================================================="
     write(*,*) " "
 
@@ -955,42 +955,59 @@ double precision function Ini_u(x)
   !-------------------------Calculations have finished-------------------------!
 endfunction
 
-!! 나 이부분에 새롭게 버거스 실제해 다시 만들어야함!! 해보자!! 
+! !! 나 이부분에 새롭게 버거스 실제해 다시 만들어야함!! 해보자!! 
+! ! 하다가 멈춤.. 왜냐? 귀찮거든요... 여기서는 fzero를 만들어야해 ㅠㅠ
+! subroutine Ext_u(i_bc, imax, x_left,x_length,time_out,exact_u)
+!   double precision, intent(in) :: time_out
+!   integer, intent(in) :: imax , i_bc
+!   double precision,intent(in) :: x_left, x_length
 
+!   double precision, intent(out) :: exact_u(1:imax) 
+
+!   double precision,external :: Ini_u
+
+!   double precision :: xi_guess
+
+!   call Get_Spatial(i_bc,imax,x_left,x_length,x,dx)
+
+!   do i =1,imax
+!     xi_guess = x(i) 
+
+! endsubroutine
 
 ! 버거스에 대해서는 exact이 없는데 어떻게 설정하지? 
 ! gpt 가 만들어줌! 
-double precision function Ext_u(x, time_out)
-  implicit none
-  double precision, intent(in) :: x, time_out
-  double precision :: xi, g, dg
-  double precision, parameter :: pi = 4.0d0*datan(1.0d0)
-  integer :: it
-  double precision, parameter :: tol = 1.0d-12
-  integer, parameter :: maxit = 50
+! double precision function Ext_u(x, time_out)
+!   implicit none
+!   double precision, intent(in) :: x, time_out
+!   double precision :: xi, g, dg
+!   double precision, parameter :: pi = 4.0d0*datan(1.0d0)
+!   integer :: it
+!   double precision, parameter :: tol = 1.0d-12
+!   integer, parameter :: maxit = 50
 
-  ! 초기 추측: shock 전 => xi ≈ x
-  xi = x
+!   ! 초기 추측: shock 전 => xi ≈ x
+!   xi = x
 
-  do it = 1, maxit
-     ! ★★★ 여기서 wrap 절대 하지 말 것 ★★★
-     ! if (xi > 1.d0)  xi = xi - 2.d0
-     ! if (xi < -1.d0) xi = xi + 2.d0
+!   do it = 1, maxit
+!      ! ★★★ 여기서 wrap 절대 하지 말 것 ★★★
+!      ! if (xi > 1.d0)  xi = xi - 2.d0
+!      ! if (xi < -1.d0) xi = xi + 2.d0
 
-     ! g(ξ) = ξ + t u0(ξ) - x
-     g  = xi + time_out*(0.25d0 + 0.5d0*dsin(pi*xi)) - x
+!      ! g(ξ) = ξ + t u0(ξ) - x
+!      g  = xi + time_out*(0.25d0 + 0.5d0*dsin(pi*xi)) - x
 
-     ! g'(ξ) = 1 + t u0'(ξ)
-     dg = 1.d0 + time_out*(0.5d0*pi*dcos(pi*xi))
+!      ! g'(ξ) = 1 + t u0'(ξ)
+!      dg = 1.d0 + time_out*(0.5d0*pi*dcos(pi*xi))
 
-     if (dabs(g) < tol) exit
+!      if (dabs(g) < tol) exit
 
-     xi = xi - g/dg
-  enddo
+!      xi = xi - g/dg
+!   enddo
 
-  Ext_u = 0.25d0 + 0.5d0*dsin(pi*xi)
-  return
-endfunction
+!   Ext_u = 0.25d0 + 0.5d0*dsin(pi*xi)
+!   return
+! endfunction
 
 double precision function Flux(u)
   implicit none
