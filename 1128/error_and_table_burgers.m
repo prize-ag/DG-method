@@ -1,3 +1,12 @@
+% 코드에 대한 설명
+% 버거스 방정식에 대한 exact soln을 구하는 코드가 들어있음
+% 초기조건은 변경 가능
+% 그리고 포트란으로 돌린 케이스들 가지고 와서, exact soln과 numerical soln을 비교
+% l2 l inf 에러를 구할 수 있고, 그에 따른 order 구함 
+% 그리고 테이블로 보기 좋게 만들어짐.
+
+
+
 clear;
 clc;
 close all;
@@ -12,7 +21,7 @@ t = 0.3;  % shock 생기기 전
 xL = -1; xR = 1;
 length_space  = abs(xR - xL) ;
 
-imax_list = [20 40 80 160 320] ;
+imax_list = [20 40 80 160 320 640 1280] ;
 
 L2_list    = zeros(size(imax_list)); % L2 에러 설정
 Linf_list  = zeros(size(imax_list)); % L inf 에러 설정 
@@ -47,6 +56,21 @@ for j = 1:length(imax_list)
         u_exact(i) = u0(xi_star);
     end
 
+    % %%newton method － 잘못된 해를 찾아줌。。 ㅠ
+    % for i = 1:imax
+    %     xi_guess = x(i);    % initial guess
+    % 
+    %     F  = @(xi) xi + t*u0(xi) - x(i);
+    %     Fp = @(xi) 1 + t*du0(xi);
+    % 
+    %     xi_star = newton_burgers(F, Fp, xi_guess, 20, 1e-14);
+    % 
+    %     u_exact(i) = u0(xi_star);
+    % end
+
+
+
+
 
     %% save file and read file
     filename = sprintf('ext_result_%d.mat', imax);  
@@ -76,10 +100,7 @@ for j = 1:length(imax_list)
     err = 0;
     err_vec = N(:,2)' - u_exact;   %0 크기 맞는 오차 벡터
 
-
-    L2_err = ;
-
-    L2_list(j)   = sum(err_vec.^2) ;
+    L2_list(j)   = sqrt(sum(err_vec.^2)) ;
     Linf_list(j) = max(abs(err_vec));
 
     % fprintf("imax=%d → L2 = %.12e, L∞ = %.12e\n", ...

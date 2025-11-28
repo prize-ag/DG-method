@@ -1,4 +1,7 @@
+% simple code to plot exact sol and numerical soln.
+
 clc;
+clear; 
 close all;
 
 % E = load('Density(Exact).plt');
