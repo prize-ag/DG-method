@@ -38,7 +38,7 @@ MODULE MODAL_DG_1D_GLOBALS
   ! TIME VARIABLES
   INTEGER,   PARAMETER                                               :: RK_ORD   = 4          ! ORDER OF RUNGE-KUTTA SOLVER
   INTEGER,   PARAMETER                                               :: NMAX     = 999999999  ! NUMBER OF THE MARCHING STEP
-  REAL( 8 ), PARAMETER                                               :: TIME_OUT = 0.2D0      ! FINAL TIME OF THE SOLUTION
+  REAL( 8 ), PARAMETER                                               :: TIME_OUT = 0.3D0      ! FINAL TIME OF THE SOLUTION
   REAL( 8 )                                                          :: DT                    ! TIME STEP SIZE
   REAL( 8 )                                                          :: FLAG_0, FLAG_1        ! TIME FLAGS
 
@@ -270,6 +270,9 @@ PROGRAM MODAL_DG_1D
   PRINT '(A, 1X, F12.6)', "2ND STAGE ORDER: ", REAL( LOG2( LINF_ERR( 2 ) / LINF_ERR( 3 ) ) )
   PRINT '(A, 1X, F12.6)', "3RD STAGE ORDER: ", REAL( LOG2( LINF_ERR( 3 ) / LINF_ERR( 4 ) ) )
   PRINT '(A, 1X, F12.6)', "4TH STAGE ORDER: ", REAL( LOG2( LINF_ERR( 4 ) / LINF_ERR( 5 ) ) )
+!   PRINT '(A, 1X, F12.6)', "5TH STAGE ORDER: ", REAL( LOG2( LINF_ERR( 5 ) / LINF_ERR( 6 ) ) )
+!   PRINT '(A, 1X, F12.6)', "6TH STAGE ORDER: ", REAL( LOG2( LINF_ERR( 6 ) / LINF_ERR( 7 ) ) )
+
   PRINT *, "------------------------------------"
 
   PRINT *, "-------------- L^2 ORDERS ----------"
@@ -277,6 +280,9 @@ PROGRAM MODAL_DG_1D
   PRINT '(A, 1X, F12.6)', "2ND STAGE ORDER: ", REAL( LOG2( L2_ERR( 2 ) / L2_ERR( 3 ) ) )
   PRINT '(A, 1X, F12.6)', "3RD STAGE ORDER: ", REAL( LOG2( L2_ERR( 3 ) / L2_ERR( 4 ) ) )
   PRINT '(A, 1X, F12.6)', "4TH STAGE ORDER: ", REAL( LOG2( L2_ERR( 4 ) / L2_ERR( 5 ) ) )
+!   PRINT '(A, 1X, F12.6)', "5TH STAGE ORDER: ", REAL( LOG2( L2_ERR( 5 ) / L2_ERR( 6 ) ) )
+!   PRINT '(A, 1X, F12.6)', "6TH STAGE ORDER: ", REAL( LOG2( L2_ERR( 6 ) / L2_ERR( 7 ) ) )
+
   PRINT *, "------------------------------------"
 
   PRINT *, "------------------------------------"
@@ -488,8 +494,9 @@ CONTAINS
     
     !----------------------------------------- CALCULATIONS HAVE STARTED ----------------------------------------!
     ! SET UP THE INITIAL FUNCTION
-    INI_U = - DSIN( PI * X ) ** 2
-    ! INI_U = 1.0D0 / 4.0D0 + DSIN( PI * X ) / 2.0D0
+    ! INI_U = DSIN( PI * X ) ** 2
+    INI_U = 1.0D0 / 4.0D0 + DSIN( PI * X ) / 2.0D0
+    
 
     RETURN
     !----------------------------------------- CALCULATIONS HAVE FINISHED ---------------------------------------!
