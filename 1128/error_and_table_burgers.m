@@ -2,8 +2,8 @@
 % 버거스 방정식에 대한 exact soln을 구하는 코드가 들어있음
 % 초기조건은 변경 가능
 % 그리고 포트란으로 돌린 케이스들 가지고 와서, exact soln과 numerical soln을 비교
-% l2 l inf 에러를 구할 수 있고, 그에 따른 order 구함 
-% 그리고 테이블로 보기 좋게 만들어짐.
+% l_2 l_inf 에러를 구할 수 있고, 그에 따른 order 구함 
+% 그리고 테이블로 만들어짐.
 
 
 
@@ -35,14 +35,14 @@ for j = 1:length(imax_list)
 
     temp_x = zeros(1, imax + 1) ; % 경계에서의 값
     x = zeros(1,imax) ; %셀 중심에서의 값
-
+    dx = zeros(1,imax) ; 
     for i = 1 : imax+1
         temp_x(i) = xL + length_space/imax * (i-1) ;
     end
 
     for i = 1: imax
         x(i)  = (temp_x(i)+temp_x(i+1))/2 ;
-
+        dx(i) = temp_x(i+1)-temp_x(i) ; 
     end
 
     u_exact = zeros(size(x));
@@ -56,7 +56,7 @@ for j = 1:length(imax_list)
         u_exact(i) = u0(xi_star);
     end
 
-    % %%newton method － 잘못된 해를 찾아줌。。 ㅠ
+    % %%newton method － 고차이다보니, 잘못된 해를 찾아줌.. 수정 필요
     % for i = 1:imax
     %     xi_guess = x(i);    % initial guess
     % 
@@ -95,12 +95,10 @@ for j = 1:length(imax_list)
     % title('Exact vs Numerical');
 
     %%plot
-
-    err1 = 0 ;
-    err = 0;
     err_vec = N(:,2)' - u_exact;   %0 크기 맞는 오차 벡터
-
-    L2_list(j)   = sqrt(sum(err_vec.^2)) ;
+    L2_err = err_vec.^2 ; 
+    L2_err = L2_err *dx(i) ; 
+    L2_list(j)   = sqrt(sum(L2_err) ) ;
     Linf_list(j) = max(abs(err_vec));
 
     % fprintf("imax=%d → L2 = %.12e, L∞ = %.12e\n", ...
@@ -131,11 +129,6 @@ end
 T = table(imax_list(:), L2_str(:), Linf_str(:), Order_L2(:), Linf_err_ord(:), ...
     'VariableNames', {'Cells','L2_Error','Linf_Error','Order_L2','Order_Linf'});
 
-
-
-% T = table(imax_list(:), L2_list(:), Linf_list(:), ...
-%           L2_err_ord(:), Linf_err_ord(:), ...
-%     'VariableNames', {'Cells', 'L2_Error', 'Linf_Error', 'Order_L2', 'Linf_err_ord'});
 
 disp(T);
 
