@@ -8,7 +8,7 @@
 
 
 clear;
-clc;
+% clc;
 close all;
 
 % 1. 초기조건 / shock 시간
@@ -47,7 +47,7 @@ for j = 1:length(imax_list)
 
     u_exact = zeros(size(x));
 
-    % 3. 각 x에 대해 implicit eq 풀기
+    % 3. 각 x에 대해 implicit eq 풀기( burgers' equation)
     for i = 1:imax
         xi_guess = x(i);  % 초기 guess는 그냥 x에서 시작
         % x(i) : 궁금한 x에서의 위치, xi :  초기조건(크시)
@@ -97,7 +97,7 @@ for j = 1:length(imax_list)
     %%plot
     err_vec = N(:,2)' - u_exact;   %0 크기 맞는 오차 벡터
     L2_err = err_vec.^2 ; 
-    L2_err = L2_err *dx(i) ; 
+    L2_err = L2_err *dx(1) ; % 지금은 균일한 격자이므로
     L2_list(j)   = sqrt(sum(L2_err) ) ;
     Linf_list(j) = max(abs(err_vec));
 
