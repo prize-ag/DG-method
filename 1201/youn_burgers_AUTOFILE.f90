@@ -1,3 +1,5 @@
+! 정리는 엉망이지만, 결론은 dg로 만든 파일 여려개를 한번에 만들어주는 코드 
+ 
   program RKDG_WENO_SCALAR_LEGENDRE
     implicit none
 
@@ -6,6 +8,7 @@
     ! <<>> 이건 언제 사용하는 걸까나? 
     integer :: i !Spatial(x-axis) index
     integer :: n !Time index
+    integer :: k ! N index 
 
     !Order of the discontinuous Galerkin method and polynomials
     integer,parameter :: DG_ord = 3 !Order of DG solver (2,3,4,5)
@@ -17,13 +20,17 @@
     double precision :: TVB_M !TVB constant
 
     !Spatial variables
-    integer,parameter :: imax= 80 * (2 ** 0) !Number of spa tial cells
+    !integer,parameter :: imax= 80 * (2 ** 0) !Number of spa tial cells
+    integer :: imax 
+    integer,dimension(1:5) :: imax_list = [ 40 ,80 ,160 ,320, 640] 
     integer,parameter :: i_bc = 2 * Legen_ord + 1 !Ghost boundary cells for WENO schemes
     double precision,parameter :: x_left  = -1.0d0 !Left boundary on x-axis
     double precision,parameter :: x_right =  1.0d0 !Right boundary on x-axis
     double precision,parameter :: x_length= dabs(x_right - x_left) !Length of domain
-    double precision,dimension(-i_bc + 1: imax + i_bc) :: x !Cell centers
-    double precision,dimension(-i_bc + 1: imax + i_bc) :: dx !Cell volumes
+    double precision,allocatable :: x(:), dx(:) !Cell centers
+
+    ! double precision,dimension(-i_bc + 1: imax + i_bc) :: x !Cell centers
+    ! double precision,dimension(-i_bc + 1: imax + i_bc) :: dx !Cell volumes
     
     !Time variables
     integer :: RK_ord !Order of Runge-Kutta solver
@@ -57,12 +64,19 @@
     double precision,dimension(0 : Legen_ord , 1 : Legen_ord + 2) :: d 
 
     !Degrees of freedom in the moments by the L2 projection
-    double precision,dimension(0 : Legen_ord,-i_bc + 1 : imax + i_bc) :: old_u 
-    double precision,dimension(0 : Legen_ord, 1 : imax) :: new_u 
+    double precision,allocatable :: old_u(:,:) , new_u(:,:) 
+
+    ! double precision,dimension(0 : Legen_ord,-i_bc + 1 : imax + i_bc) :: old_u 
+    ! double precision,dimension(0 : Legen_ord, 1 : imax) :: new_u 
 
     !Convex summation of degrees of freedom and Legendre polynommials 
     double precision :: temp_sum
-    double precision,dimension(1 : imax) :: sum_ext_u , sum_new_u
+    ! double precision,dimension(1 : imax) :: sum_ext_u , sum_new_u
+    double precision, allocatable :: sum_ext_u(:),sum_new_u(:) 
+
+
+    character(len=50) :: fname 
+
 
     write(*,*) "================================================================="
     write(*,*) "        Scalar conservation laws solver. (Burgers' equation)      "
@@ -71,70 +85,92 @@
     write(*,*) "================================================================="
     write(*,*) " "
 
-    !Set several initial settings
-    n=0
-    flag_0=0.0d0
-    flag_1=0.0d0
-    call Get_Quadrature(7 , Q)
-    call Get_Mass(Legen_ord,Q,M)
-    call Get_Spatial(i_bc,imax,x_left,x_length,x,dx)
-    call Get_Initial(Legen_ord,Q,M,i_bc,imax,x,dx,old_u,l_b,r_b)
 
-    d = 0.0d0 
+    do k = 1, size(imax_list)
+      imax = imax_list(k)
+      allocate( x (-i_bc + 1: imax + i_bc ))
+      allocate( dx(-i_bc + 1: imax + i_bc ))
+      allocate( old_u(0 : Legen_ord , -i_bc + 1 : imax + i_bc))
+      allocate( new_u(0 : Legen_ord , 1 : imax)) 
+      allocate( sum_ext_u(1 : imax) )
+      allocate( sum_new_u(1 : imax) ) 
 
-    TVB_M=1.0d0
-    
-    RK_ord=DG_ord
 
-    ! open(0,file='Density(Exact).plt')
-    open(1,file='Density(Numerical_80).plt')
+      !Set several initial settings
+      n=0
+      flag_0=0.0d0
+      flag_1=0.0d0
+      call Get_Quadrature(5 , Q)
+      call Get_Mass(Legen_ord,Q,M)
+      call Get_Spatial(i_bc,imax,x_left,x_length,x,dx)
+      call Get_Initial(Legen_ord,Q,M,i_bc,imax,x,dx,old_u,l_b,r_b)
 
-    
-    call system_clock(count_rate = rate)
-    call system_clock(time_0)
+      d = 0.0d0 
 
-    !============================================================================!
-    !=======================Time marching procedure(Start)=======================!
-    !============================================================================!
+      TVB_M=1.0d0
+      
+      RK_ord=4
 
-    do n=1,nmax
-        if(flag_0 < time_out)then
-          flag_1=flag_0
+      write(fname, '( "Density(Numerical_", I0, ").plt" )') imax
+      open(unit=1, file=fname)
 
-          !Compute the time step size by using the first-derivative of flux
-          call Get_Timestep(DG_ord,i_bc,imax,dx,flag_1,time_out,CFL,dt)
-        
-          !Update the variable by using TVD RK solver
-          call Get_RK(RK_ord,TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx,dt&
-                                                            &,old_u,new_u)
-          !Update the real-time
-          flag_1=flag_1+dt
-          flag_0=flag_1
+      ! open(0,file='Density(Exact).plt')
+      ! open(1,file='Density(Numerical_160).plt')
 
-          !Receive the updated data
-          do i=1,imax
-              do ord=0,Legen_ord
-                old_u(ord,i)=new_u(ord,i)
-              enddo 
-          enddo
+      
+      call system_clock(count_rate = rate)
+      call system_clock(time_0)
+
+      !============================================================================!
+      !=======================Time marching procedure(Start)=======================!
+      !============================================================================!
+
+      do n=1,nmax
+          if(flag_0 < time_out)then
+            flag_1=flag_0
+
+            !Compute the time step size by using the first-derivative of flux
+            call Get_Timestep(DG_ord,i_bc,imax,dx,flag_1,time_out,CFL,dt)
           
-        elseif(flag_0 == time_out)then
-         !Record the numerical result at the finial time
-          do i=1,imax
-              temp_sum=0.0d0
-              do ord=0,Legen_ord
-                temp_sum=temp_sum+new_u(ord,i)*Le_poly(ord,0.0d0)
-                sum_new_u(i)=temp_sum
-              enddo
-          enddo
-    
-          !Record the final numerical result
-          goto 10
-        endif
-    enddo 
-    10 continue 
-    call Get_Result(i_bc,imax,x,sum_new_u(1:imax))
+            !Update the variable by using TVD RK solver
+            call Get_RK(RK_ord,TVB_M,Legen_ord,Q,M,d,l_b,r_b,i_bc,imax,x,dx,dt&
+                                                              &,old_u,new_u)
+            !Update the real-time
+            flag_1=flag_1+dt
+            flag_0=flag_1
 
+            !Receive the updated data
+            do i=1,imax
+                do ord=0,Legen_ord
+                  old_u(ord,i)=new_u(ord,i)
+                enddo 
+            enddo
+            
+          elseif(flag_0 == time_out)then
+          !Record the numerical result at the finial time
+            do i=1,imax
+                temp_sum=0.0d0
+                do ord=0,Legen_ord
+                  temp_sum=temp_sum+new_u(ord,i)*Le_poly(ord,0.0d0)
+                  sum_new_u(i)=temp_sum
+                enddo
+            enddo
+      
+            !Record the final numerical result
+            goto 10
+          endif
+      enddo 
+      10 continue 
+      call Get_Result(i_bc,imax,x,sum_new_u(1:imax))
+
+      DEALLOCATE( X )
+      DEALLOCATE( DX )
+      DEALLOCATE( old_u )
+      DEALLOCATE( new_u )
+      DEALLOCATE( sum_ext_u )
+      DEALLOCATE( sum_new_u )
+
+    enddo
     !============================================================================!
     !======================Time marching procedure(Finish)=======================!
     !============================================================================!
@@ -378,14 +414,13 @@ subroutine Get_Initial(Legen_ord,Q,M,i_bc,imax,x,dx,u_0,l_b,r_b)
 
     !Compute degree of freedoms of initial data by using quadratures
         do ord = 0 , Legen_ord           
-            do r = 1,6 
-                u_0(ord,i) = u_0(ord,i) + Ini_u(xq(r)) * Le_poly(ord,Q(r,1)) * Q(r,2) 
-                ! weight를 바꾸야하지 않나..? 자코비안 곱해야할 것 같은데.... & 노드를 그냥 원래 노드를 넣어도 될까? 
-                ! --> 무척 신기하네.. 다 포함되어 있는 것임... Q(1,2)를 넣으므로 써 자코비안이 이미 곱해진 형태를 가지고 있다. 
-            enddo
-
+          do r = 1,6 
+            u_0(ord,i) = u_0(ord,i) + Ini_u(xq(r)) * Le_poly(ord,Q(r,1)) * Q(r,2) 
+            ! weight를 바꾸야하지 않나..? 자코비안 곱해야할 것 같은데.... & 노드를 그냥 원래 노드를 넣어도 될까? 
+            ! --> 무척 신기하네.. 다 포함되어 있는 것임... Q(1,2)를 넣으므로 써 자코비안이 이미 곱해진 형태를 가지고 있다. 
+          enddo
                 !Product the mass matrix for the orthonormalization                 
-            u_0(ord,i)=M(ord,ord)*u_0(ord,i)
+          u_0(ord,i)=M(ord,ord)*u_0(ord,i)
         enddo
     enddo              
                                     

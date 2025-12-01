@@ -11,10 +11,7 @@ MODULE MODAL_DG_1D_GLOBALS
   INTEGER                                                            :: I0  ! GRID REFINEMENT INDEX
 
   ! REFINEMENT CONTROL
-  INTEGER, PARAMETER                                                 :: NLEV      = 4 ! NUMBER OF GRID LEVELS
-
-  ! REFERENCE GRID LEVEL (FOR EXACT / REFERENCE SOLUTION)
-  ! INTEGER, PARAMETER                                                 :: IMAX_REF  = 12800 * 1
+  INTEGER, PARAMETER                                                 :: NLEV      = 6 ! NUMBER OF GRID LEVELS
 
   ! ORDER OF THE DISCONTINUOUS GALERKIN METHOD AND POLYNOMIALS
   INTEGER, PARAMETER                                                 :: DG_ORD    = 3          ! ORDER OF DG SOLVER
@@ -22,11 +19,11 @@ MODULE MODAL_DG_1D_GLOBALS
 
   ! USEFUL CONSTANTS AND FUNCTIONS
   REAL( 8 ), PARAMETER                                               :: PI        = 4.0D0 * DATAN( 1.0D0 )
-  REAL( 8 ), PARAMETER                                               :: CFL       = 0.5D0 / DBLE( 2 * POLY_ORD + 1 ) ! CFL NUMBER
+  REAL( 8 ), PARAMETER                                               :: CFL       = 0.1D0 / DBLE( 2 * POLY_ORD + 1 ) ! CFL NUMBER
 
   ! SPATIAL VARIABLES
   INTEGER                                                            :: IMAX                                 ! ACTIVE NUMBER OF SPATIAL CELLS
-  INTEGER,   PARAMETER                                               :: I_BC      = 5                        ! GHOST BOUNDARY CELLS FOR WENO SCHEMES
+  INTEGER,   PARAMETER                                               :: I_BC      = 1                        ! GHOST BOUNDARY CELLS FOR WENO SCHEMES
   REAL( 8 ), PARAMETER                                               :: X_LEFT    = - 1.0D0                  ! LEFT BOUNDARY ON X-AXIS
   REAL( 8 ), PARAMETER                                               :: X_RIGHT   = + 1.0D0                  ! RIGHT BOUNDARY ON X-AXIS
   REAL( 8 ), PARAMETER                                               :: X_LENGTH  = DABS( X_RIGHT - X_LEFT ) ! LENGTH OF DOMAIN
@@ -36,11 +33,11 @@ MODULE MODAL_DG_1D_GLOBALS
   REAL( 8 )                                                          :: MAXDX ! MAXIMAL CELL VOLUME
   
   ! TIME VARIABLES
-  INTEGER,   PARAMETER                                               :: RK_ORD   = 4          ! ORDER OF RUNGE-KUTTA SOLVER
-  INTEGER,   PARAMETER                                               :: NMAX     = 999999999  ! NUMBER OF THE MARCHING STEP
-  REAL( 8 ), PARAMETER                                               :: TIME_OUT = 0.3D0      ! FINAL TIME OF THE SOLUTION
-  REAL( 8 )                                                          :: DT                    ! TIME STEP SIZE
-  REAL( 8 )                                                          :: FLAG_0, FLAG_1        ! TIME FLAGS
+  INTEGER,   PARAMETER                                               :: RK_ORD   = 4             ! ORDER OF RUNGE-KUTTA SOLVER
+  INTEGER,   PARAMETER                                               :: NMAX     = 999999999     ! NUMBER OF THE MARCHING STEP
+  REAL( 8 ), PARAMETER                                               :: TIME_OUT = 0.5 / PI ** 2 ! FINAL TIME OF THE SOLUTION
+  REAL( 8 )                                                          :: DT                       ! TIME STEP SIZE
+  REAL( 8 )                                                          :: FLAG_0, FLAG_1           ! TIME FLAGS
 
   ! CPU TIME CHECKERS
   INTEGER                                                            :: RATE, TIME_0, TIME_1
@@ -62,18 +59,6 @@ MODULE MODAL_DG_1D_GLOBALS
   REAL( 8 )                                                          :: TEMP
   REAL( 8 ), ALLOCATABLE, DIMENSION( : )                             :: U, NEW_U
 
-  ! REFERENCE GRID STORAGE (ON COARSE GRID POINTS)
-  !   REAL( 8 ), ALLOCATABLE, DIMENSION( : )                             :: U_REF
-  !   REAL( 8 ), ALLOCATABLE, DIMENSION( : )                             :: X_REF
-
-  ! REFERENCE GRID STORAGE (ON FIXED FINE GRID POINTS)
-  !   REAL( 8 ), ALLOCATABLE, DIMENSION( : )                             :: U_FINE_REF
-  !   REAL( 8 ), ALLOCATABLE, DIMENSION( : )                             :: X_FINE_REF
-
-  ! ERROR STORAGE FOR CONVERGENCE STUDY
-  REAL( 8 ), DIMENSION( 1 : NLEV + 1 )                               :: L2_ERR
-    !   REAL( 8 ), DIMENSION( 1 : NLEV + 1 )                               :: LINF_ERR
-
   ! PLOTTING / STRING VARIABLES
   INTEGER, PARAMETER                                                 :: WIDTH = 36
   INTEGER                                                            :: PAD
@@ -82,16 +67,6 @@ MODULE MODAL_DG_1D_GLOBALS
 
   INTEGER                                                            :: UNIT_ID
   CHARACTER( LEN = 40 )                                              :: FNAME
-
-  INTEGER                                                            :: J_REF
-  REAL( 8 )                                                          :: RATIO
-  REAL( 8 )                                                          :: POS, ALPHA, DX_REF_LOC
-
-  ! REFERENCE GRID FILE NAME
-  CHARACTER( LEN = 40 ), PARAMETER                                   :: REF_FILE = 'DG1D_REFERENCE_GRID.TXT'
-
-  ! LOCAL REFINEMENT RATIO BETWEEN COARSE GRID AND REFERENCE GRID (MUST BE ODD)
-  INTEGER, PARAMETER                                                 :: REF_RATIO = 3
 
 END MODULE MODAL_DG_1D_GLOBALS
 
@@ -103,8 +78,6 @@ PROGRAM MODAL_DG_1D
 
   IMPLICIT NONE
 
-  !LOGICAL :: REF_EXISTS
-
   PRINT *, "================================================================================================="
   PRINT *, "                            SCALAR CONSERVATION LAWS SOLVER. (BUGERS')                           "
   PRINT *, "================================================================================================="
@@ -114,40 +87,20 @@ PROGRAM MODAL_DG_1D
 
   CALL GET_QUADRATURE( Q )
 
-    !   PRINT *, "------------------------------------"
-    !   PRINT *, "CFL NUMBER:", REAL( CFL )
-    !   PRINT *, "------------------------------------"
-    !   PRINT *, " "
-
-  ! CHECK REFERENCE GRID FILE (FIXED FINE GRID)
-  !INQUIRE( FILE = REF_FILE, EXIST = REF_EXISTS )
-  
-    !   PRINT *, "------------------------------------"
-    !   IF ( REF_EXISTS ) THEN
-
-    !       PRINT *, "REFERENCE GRID FILE FOUND."
-    !       PRINT *, REF_FILE
-    !       PRINT *, "------------------------------------"
-    !       CALL LOAD_REFERENCE_FROM_FILE
-
-    !   ELSE
-
-    !       PRINT *, "REFERENCE GRID FILE NOT FOUND."
-    !       PRINT *, "COMPUTING REFERENCE GRID ON FINE MESH ..."
-    !       PRINT *, "------------------------------------"
-    !       CALL COMPUTE_REFERENCE_AND_SAVE
-
-!   END IF
+  PRINT *, "------------------------------------"
+  PRINT *, "CFL NUMBER:", REAL( CFL )
+  PRINT *, "------------------------------------"
+  PRINT *, " "
 
   CALL SYSTEM_CLOCK( COUNT_RATE = RATE )
   CALL SYSTEM_CLOCK( TIME_0 )
 
   DO I0 = 1, NLEV + 1
 
-    !   PRINT *, "------------------------------------"
-    !   PRINT *, "GRID LEVEL: ", I0
-      IMAX = 10 * ( 2 ** ( I0 + 1 ) )
-    !   PRINT *, "NUMBER OF CELLS: ", IMAX
+      PRINT *, "------------------------------------"
+      PRINT *, "GRID LEVEL: ", I0
+      IMAX = 5 * ( 2 ** ( I0 + 1 ) )
+      PRINT *, "NUMBER OF CELLS: ", IMAX
 
       FLAG_0 = 0.0D0
       FLAG_1 = FLAG_0
@@ -158,8 +111,6 @@ PROGRAM MODAL_DG_1D
       ALLOCATE( NEW_DEG( 0 : POLY_ORD, 1 : IMAX ) )
       ALLOCATE( U      ( 1 : IMAX ) )
       ALLOCATE( NEW_U  ( 1 : IMAX ) )
-    !   ALLOCATE( U_REF  ( 1 : IMAX ) )
-    !   ALLOCATE( X_REF  ( 1 : IMAX ) )
 
       CALL GET_SPATIAL( I_BC, IMAX, X_LEFT, X_LENGTH, X, DX, MAXDX )
       CALL GET_MASS   ( POLY_ORD, MAXDX, Q, M )
@@ -212,46 +163,19 @@ PROGRAM MODAL_DG_1D
 
       END DO    
 
-      ! INTERPOLATE REFERENCE SOLUTION FROM FIXED FINE GRID TO COARSE GRID CENTERS
-      !CALL INTERPOLATE_REFERENCE_ON_COARSE( IMAX, X, U_REF, X_REF )
-
-      ! OPTIONAL GRID ALIGNMENT CHECK FOR THE FIRST GRID LEVEL
-    !   IF ( I0 .EQ. 1 ) THEN
-
-    !       PRINT *, "   I           X_COARSE          X_REF(I)"
-
-    !       DO I = 1, IMAX
-
-    !           WRITE( *, '(I4,2X,F16.8,2X,F16.8)' ) I, X( I ), X_REF( I )
-
-    !       END DO
-
-    !   END IF
-
-      ! WRITE GRID DATA (X, U_REF, NEW_U) TO FILE FOR EXTERNAL PLOTTING
-      WRITE( FNAME, '(A,I1,A)' ) 'DG1D_GRIDLEVEL_', I0, '.TXT'
+      ! WRITE NUMERICAL SOLUTION (X, NEW_U) FOR MATLAB POST-PROCESSING
+      WRITE( FNAME, '(A,I5.5,A)' ) 'DG1D_NUMERICAL_', IMAX, '.TXT'
 
       OPEN( NEWUNIT = UNIT_ID, FILE = FNAME, STATUS = 'REPLACE', &
             ACTION = 'WRITE', FORM = 'FORMATTED' )
 
       DO I = 1, IMAX
 
-          WRITE( UNIT_ID, '(3(1X, ES24.16E3))' ) X( I ), NEW_U( I )
+          WRITE( UNIT_ID, '(2(1X, ES24.16E3))' ) X( I ), NEW_U( I )
 
       END DO
 
       CLOSE( UNIT_ID )
-
-    !   ! COMPUTE ERRORS
-    !   PRINT *, "--------- ERRORS (FINAL) -----------"
-
-    !   CALL GET_L2    ( I_BC, IMAX, DX, U_REF, NEW_U, L2_ERR  ( I0 ) )
-    !   CALL GET_LINFTY(       IMAX,     U_REF, NEW_U, LINF_ERR( I0 ) )
-
-    !   PRINT *, "L_2 ERROR:     ", REAL( L2_ERR( I0 ) )
-    !   PRINT *, "L_INFTY ERROR: ", REAL( LINF_ERR( I0 ) )
-    !   PRINT *, "------------------------------------"
-    !   PRINT *, " "
 
       DEALLOCATE( X )
       DEALLOCATE( DX )
@@ -259,32 +183,10 @@ PROGRAM MODAL_DG_1D
       DEALLOCATE( NEW_DEG )
       DEALLOCATE( U )
       DEALLOCATE( NEW_U )
-    !   DEALLOCATE( U_REF )
-    !   DEALLOCATE( X_REF )
 
   END DO 
 
   CALL SYSTEM_CLOCK( TIME_1 )
-
-    !   PRINT *, "---------- L^INFTY ORDERS ----------"
-    !   PRINT '(A, 1X, F12.6)', "1ST STAGE ORDER: ", REAL( LOG2( LINF_ERR( 1 ) / LINF_ERR( 2 ) ) )
-    !   PRINT '(A, 1X, F12.6)', "2ND STAGE ORDER: ", REAL( LOG2( LINF_ERR( 2 ) / LINF_ERR( 3 ) ) )
-    !   PRINT '(A, 1X, F12.6)', "3RD STAGE ORDER: ", REAL( LOG2( LINF_ERR( 3 ) / LINF_ERR( 4 ) ) )
-    !   PRINT '(A, 1X, F12.6)', "4TH STAGE ORDER: ", REAL( LOG2( LINF_ERR( 4 ) / LINF_ERR( 5 ) ) )
-    ! !   PRINT '(A, 1X, F12.6)', "5TH STAGE ORDER: ", REAL( LOG2( LINF_ERR( 5 ) / LINF_ERR( 6 ) ) )
-    ! !   PRINT '(A, 1X, F12.6)', "6TH STAGE ORDER: ", REAL( LOG2( LINF_ERR( 6 ) / LINF_ERR( 7 ) ) )
-
-    !   PRINT *, "------------------------------------"
-
-    !   PRINT *, "-------------- L^2 ORDERS ----------"
-    !   PRINT '(A, 1X, F12.6)', "1ST STAGE ORDER: ", REAL( LOG2( L2_ERR( 1 ) / L2_ERR( 2 ) ) )
-    !   PRINT '(A, 1X, F12.6)', "2ND STAGE ORDER: ", REAL( LOG2( L2_ERR( 2 ) / L2_ERR( 3 ) ) )
-    !   PRINT '(A, 1X, F12.6)', "3RD STAGE ORDER: ", REAL( LOG2( L2_ERR( 3 ) / L2_ERR( 4 ) ) )
-    !   PRINT '(A, 1X, F12.6)', "4TH STAGE ORDER: ", REAL( LOG2( L2_ERR( 4 ) / L2_ERR( 5 ) ) )
-    ! !   PRINT '(A, 1X, F12.6)', "5TH STAGE ORDER: ", REAL( LOG2( L2_ERR( 5 ) / L2_ERR( 6 ) ) )
-    ! !   PRINT '(A, 1X, F12.6)', "6TH STAGE ORDER: ", REAL( LOG2( L2_ERR( 6 ) / L2_ERR( 7 ) ) )
-
-    !   PRINT *, "------------------------------------"
 
   PRINT *, "------------------------------------"
   PRINT '(A, F12.6, 1X, A)', "COMPUTATIONAL TIME : ", REAL( TIME_1 - TIME_0 ) / REAL( RATE ), "SEC"
@@ -301,191 +203,6 @@ CONTAINS
 
   ! @@@@@
 
-    !   SUBROUTINE COMPUTE_REFERENCE_AND_SAVE
-
-    !     IMPLICIT NONE
-
-    !     INTEGER                                                         :: IMAX_FINE
-    !     REAL( 8 ), ALLOCATABLE, DIMENSION( : )                          :: X_FINE
-    !     REAL( 8 ), ALLOCATABLE, DIMENSION( : )                          :: DX_FINE
-    !     REAL( 8 )                                                       :: MAXDX_FINE
-    !     REAL( 8 ), ALLOCATABLE, DIMENSION( :, : )                       :: OLD_DEG_FINE
-    !     REAL( 8 ), ALLOCATABLE, DIMENSION( :, : )                       :: NEW_DEG_FINE
-    !     REAL( 8 ), ALLOCATABLE, DIMENSION( : )                          :: U_FINE
-    !     REAL( 8 )                                                       :: FLAG_FINE_0, FLAG_FINE_1
-    !     REAL( 8 )                                                       :: DT_FINE
-    !     INTEGER                                                         :: I_FINE, ORD_FINE
-    !     INTEGER                                                         :: N_FINE
-    !     !----------------------------------------- CALCULATIONS HAVE STARTED ----------------------------------------!
-
-    !     IMAX_FINE   = IMAX_REF
-    !     FLAG_FINE_0 = 0.0D0
-    !     FLAG_FINE_1 = FLAG_FINE_0
-
-    !     ALLOCATE( X_FINE      ( - I_BC + 1 : IMAX_FINE + I_BC ) )
-    !     ALLOCATE( DX_FINE     ( - I_BC + 1 : IMAX_FINE + I_BC ) )
-    !     ALLOCATE( OLD_DEG_FINE( 0 : POLY_ORD, - I_BC + 1 : IMAX_FINE + I_BC ) )
-    !     ALLOCATE( NEW_DEG_FINE( 0 : POLY_ORD, 1 : IMAX_FINE ) )
-    !     ALLOCATE( U_FINE      ( 1 : IMAX_FINE ) )
-
-    !     CALL GET_SPATIAL( I_BC, IMAX_FINE, X_LEFT, X_LENGTH, X_FINE, DX_FINE, MAXDX_FINE )
-    !     CALL GET_MASS   ( POLY_ORD, MAXDX_FINE, Q, M )
-
-    !     CALL GET_INITIAL( PI, POLY_ORD, Q, M, I_BC, IMAX_FINE, X_FINE, DX_FINE, MAXDX_FINE, OLD_DEG_FINE, L_B, R_B )
-
-    !     N_FINE = 1
-
-    !     DO WHILE ( ( FLAG_FINE_0 < TIME_OUT ) .AND. ( N_FINE <= NMAX ) )
-
-    !         FLAG_FINE_1 = FLAG_FINE_0
-
-    !         CALL GET_TIMESTEP( I_BC, IMAX_FINE, DX_FINE, MAXDX_FINE, FLAG_FINE_1, TIME_OUT, CFL, OLD_DEG_FINE, DT_FINE )
-    !         CALL GET_RK      ( RK_ORD, POLY_ORD, Q, M, L_B, R_B, I_BC, IMAX_FINE, X_FINE, DX_FINE, &
-    !          MAXDX_FINE, DT_FINE, OLD_DEG_FINE, NEW_DEG_FINE )
-
-    !         FLAG_FINE_1 = FLAG_FINE_1 + DT_FINE
-    !         FLAG_FINE_0 = FLAG_FINE_1
-
-    !         DO I_FINE = 1, IMAX_FINE
-
-    !             DO ORD_FINE = 0, POLY_ORD
-
-    !                 OLD_DEG_FINE( ORD_FINE, I_FINE ) = NEW_DEG_FINE( ORD_FINE, I_FINE )
-
-    !             END DO
-
-    !         END DO
-
-    !         N_FINE = N_FINE + 1
-
-    !     END DO
-
-    !     ALLOCATE( X_FINE_REF( 1 : IMAX_REF ) )
-    !     ALLOCATE( U_FINE_REF( 1 : IMAX_REF ) )
-
-    !     DO I_FINE = 1, IMAX_FINE
-
-    !         TEMP = 0.0D0
-
-    !         DO ORD_FINE = 0, POLY_ORD
-
-    !             TEMP = TEMP + OLD_DEG_FINE( ORD_FINE, I_FINE ) * POLY( ORD_FINE, 0.0D0, DX_FINE( I_FINE ) )
-
-    !         END DO
-
-    !         U_FINE_REF( I_FINE ) = TEMP
-    !         X_FINE_REF( I_FINE ) = X_FINE( I_FINE )
-
-    !     END DO
-
-    !     ! SAVE REFERENCE GRID TO FILE
-    !     OPEN( NEWUNIT = UNIT_ID, FILE = REF_FILE, STATUS = 'REPLACE', &
-    !           ACTION = 'WRITE', FORM = 'FORMATTED' )
-
-    !     DO I_FINE = 1, IMAX_FINE
-
-    !         WRITE( UNIT_ID, '(I8, 1X, ES24.16E3, 1X, ES24.16E3)' ) I_FINE, X_FINE_REF( I_FINE ), U_FINE_REF( I_FINE )
-
-    !     END DO
-
-    !     CLOSE( UNIT_ID )
-
-    !     DEALLOCATE( X_FINE )
-    !     DEALLOCATE( DX_FINE )
-    !     DEALLOCATE( OLD_DEG_FINE )
-    !     DEALLOCATE( NEW_DEG_FINE )
-    !     DEALLOCATE( U_FINE )
-
-    !     PRINT *, "REFERENCE GRID COMPUTED ON FINE MESH AND SAVED TO FILE:"
-    !     PRINT *, REF_FILE
-
-    !     RETURN
-    !     !----------------------------------------- CALCULATIONS HAVE FINISHED ---------------------------------------!
-    !   END SUBROUTINE COMPUTE_REFERENCE_AND_SAVE
-
-    !   SUBROUTINE LOAD_REFERENCE_FROM_FILE
-
-    !     IMPLICIT NONE
-
-    !     INTEGER   :: IOS
-    !     REAL( 8 ) :: X_DUMMY
-    !     REAL( 8 ) :: U_DUMMY
-    !     INTEGER   :: I_DUMMY
-    !     INTEGER   :: I_FINE
-    !     !----------------------------------------- CALCULATIONS HAVE STARTED ----------------------------------------!
-
-    !     ALLOCATE( X_FINE_REF( 1 : IMAX_REF ) )
-    !     ALLOCATE( U_FINE_REF( 1 : IMAX_REF ) )
-
-    !     OPEN( NEWUNIT = UNIT_ID, FILE = REF_FILE, STATUS = 'OLD', &
-    !           ACTION = 'READ', FORM = 'FORMATTED' )
-
-    !     DO I_FINE = 1, IMAX_REF
-
-    !         READ( UNIT_ID, *, IOSTAT = IOS ) I_DUMMY, X_DUMMY, U_DUMMY
-
-    !         IF ( IOS /= 0 ) THEN
-
-    !             PRINT *, "ERROR READING REFERENCE FILE AT LINE ", I_FINE
-    !             STOP
-
-    !         END IF
-
-    !         X_FINE_REF( I_FINE ) = X_DUMMY
-    !         U_FINE_REF( I_FINE ) = U_DUMMY
-
-    !     END DO
-
-    !     CLOSE( UNIT_ID )
-
-    !     PRINT *, "REFERENCE GRID LOADED FROM FILE."
-    !     PRINT *, REF_FILE
-    !     PRINT *, "------------------------------------"
-
-    !     RETURN
-    !     !----------------------------------------- CALCULATIONS HAVE FINISHED ---------------------------------------!
-    !   END SUBROUTINE LOAD_REFERENCE_FROM_FILE
-
-    !   SUBROUTINE INTERPOLATE_REFERENCE_ON_COARSE( IMAX_COARSE, X_COARSE, U_REF_COARSE, X_REF_COARSE )
-
-    !     IMPLICIT NONE
-
-    !     INTEGER, INTENT( IN )                                           :: IMAX_COARSE
-    !     REAL( 8 ), DIMENSION( - I_BC + 1 : IMAX_COARSE + I_BC ), INTENT( IN )  :: X_COARSE
-    !     REAL( 8 ), DIMENSION( 1 : IMAX_COARSE ), INTENT( OUT )          :: U_REF_COARSE
-    !     REAL( 8 ), DIMENSION( 1 : IMAX_COARSE ), INTENT( OUT )          :: X_REF_COARSE
-
-    !     INTEGER                                                         :: I_COARSE
-    !     INTEGER                                                         :: J0, J1
-    !     !----------------------------------------- CALCULATIONS HAVE STARTED ----------------------------------------!
-
-    !     DX_REF_LOC = X_FINE_REF( 2 ) - X_FINE_REF( 1 )
-
-    !     DO I_COARSE = 1, IMAX_COARSE
-
-    !         POS = ( X_COARSE( I_COARSE ) - X_LEFT ) / DX_REF_LOC + 0.5D0
-
-    !         J0  = INT( POS )
-
-    !         IF ( J0 < 1 ) J0 = 1
-    !         IF ( J0 > IMAX_REF - 1 ) J0 = IMAX_REF - 1
-
-    !         J1    = J0 + 1
-    !         ALPHA = POS - DBLE( J0 )
-
-    !         U_REF_COARSE( I_COARSE ) = ( 1.0D0 - ALPHA ) * U_FINE_REF( J0 ) + ALPHA * U_FINE_REF( J1 )
-    !         X_REF_COARSE( I_COARSE ) = X_COARSE( I_COARSE )
-
-    !     END DO
-
-    !     RETURN
-    !     !----------------------------------------- CALCULATIONS HAVE FINISHED ---------------------------------------!
-    !   END SUBROUTINE INTERPOLATE_REFERENCE_ON_COARSE
-
-  ! @@@@@
-
-  ! @@@@@
-
   REAL( 8 ) FUNCTION INI_U( X, PI )
 
     IMPLICIT NONE
@@ -495,9 +212,8 @@ CONTAINS
     
     !----------------------------------------- CALCULATIONS HAVE STARTED ----------------------------------------!
     ! SET UP THE INITIAL FUNCTION
-    ! INI_U = DSIN( PI * X ) ** 2
+    ! INI_U = - DSIN( PI * X ) ** 2
     INI_U = 1.0D0 / 4.0D0 + DSIN( PI * X ) / 2.0D0
-    
 
     RETURN
     !----------------------------------------- CALCULATIONS HAVE FINISHED ---------------------------------------!
@@ -645,62 +361,31 @@ CONTAINS
     ! JACOBIAN OF THE AFFINE MAPPING IS APPLIED TO EACH QUADRATURE WEIGHT
 
     ! NODES OF 6TH-ORDER GAUSS-LOBATTO QUADRATURE
-    Q( 1, 1 ) =  1.0D0 / 2.0D0
-    Q( 2, 1 ) = -Q( 1, 1 )
-    Q( 3, 1 ) =  DSQRT( 5.0D0 ) / 10.0D0
-    Q( 4, 1 ) = -Q( 3, 1 )
+    ! Q( 1, 1 ) =  1.0D0 / 2.0D0
+    ! Q( 2, 1 ) = -Q( 1, 1 )
+    ! Q( 3, 1 ) =  DSQRT( 5.0D0 ) / 10.0D0
+    ! Q( 4, 1 ) = -Q( 3, 1 )
 
     ! WEIGHTS OF 6TH-ORDER GAUSS-LOBATTO QUADRATURE
-    Q( 1, 2 ) = 1.0D0 / 12.0D0
-    Q( 2, 2 ) = Q( 1, 2 )
-    Q( 3, 2 ) = 5.0D0 / 12.0D0
-    Q( 4, 2 ) = Q( 3, 2 )
+    ! Q( 1, 2 ) = 1.0D0 / 12.0D0
+    ! Q( 2, 2 ) = Q( 1, 2 )
+    ! Q( 3, 2 ) = 5.0D0 / 12.0D0
+    ! Q( 4, 2 ) = Q( 3, 2 )
 
     ! (OPTIONAL) 8TH-ORDER GAUSS-LEGENDRE (COMMENTED)
-    ! Q( 1, 1 ) = DSQRT( 3.0D0 / 7.0D0 + ( 2.0D0 / 7.0D0 ) * DSQRT( 6.0D0 / 5.0D0 ) ) / 2.0D0
-    ! Q( 2, 1 ) = DSQRT( 3.0D0 / 7.0D0 - ( 2.0D0 / 7.0D0 ) * DSQRT( 6.0D0 / 5.0D0 ) ) / 2.0D0
-    ! Q( 3, 1 ) = -Q( 2, 1 )
-    ! Q( 4, 1 ) = -Q( 1, 1 )
+    Q( 1, 1 ) = DSQRT( 3.0D0 / 7.0D0 + ( 2.0D0 / 7.0D0 ) * DSQRT( 6.0D0 / 5.0D0 ) ) / 2.0D0
+    Q( 2, 1 ) = DSQRT( 3.0D0 / 7.0D0 - ( 2.0D0 / 7.0D0 ) * DSQRT( 6.0D0 / 5.0D0 ) ) / 2.0D0
+    Q( 3, 1 ) = -Q( 2, 1 )
+    Q( 4, 1 ) = -Q( 1, 1 )
 
-    ! Q( 1, 2 ) = ( 18.0D0 - DSQRT( 30.0D0 ) ) / 72.0D0
-    ! Q( 2, 2 ) = ( 18.0D0 + DSQRT( 30.0D0 ) ) / 72.0D0
-    ! Q( 3, 2 ) = Q( 2, 2 )
-    ! Q( 4, 2 ) = Q( 1, 2 )
+    Q( 1, 2 ) = ( 18.0D0 - DSQRT( 30.0D0 ) ) / 72.0D0
+    Q( 2, 2 ) = ( 18.0D0 + DSQRT( 30.0D0 ) ) / 72.0D0
+    Q( 3, 2 ) = Q( 2, 2 )
+    Q( 4, 2 ) = Q( 1, 2 )
   
     RETURN
     !----------------------------------------- CALCULATIONS HAVE FINISHED ---------------------------------------!
   END SUBROUTINE GET_QUADRATURE
-
-  SUBROUTINE GET_QUADRATURE1( Q )
-
-    IMPLICIT NONE
-
-    REAL( 8 ), INTENT( OUT ), DIMENSION( 1 : 6, 1 : 2 ) :: Q
-    !----------------------------------------- CALCULATIONS HAVE STARTED ----------------------------------------!
-
-    ! QUADRATURE WEIGHTS ARE SCALED FOR INTEGRATIONS ON [ -1.0D0 / 2.0D0, 1.0D0 / 2.0D0 ]
-    ! JACOBIAN OF THE AFFINE MAPPING IS APPLIED TO EACH QUADRATURE WEIGHT
-
-    ! NODES OF 6TH-ORDER GAUSS-LOBATTO QUADRATURE
-    Q(1,1) = -1.0d0/2.0d0
-    Q(2,1) = -dsqrt(147.0d0 + 42.0d0*dsqrt(7.0d0)) / 42.0d0
-    Q(3,1) = -dsqrt(147.0d0 - 42.0d0*dsqrt(7.0d0)) / 42.0d0
-    Q(4,1) =  dsqrt(147.0d0 - 42.0d0*dsqrt(7.0d0)) / 42.0d0
-    Q(5,1) =  dsqrt(147.0d0 + 42.0d0*dsqrt(7.0d0)) / 42.0d0
-    Q(6,1) =  1.0d0/2.0d0
-
-
-    Q(1,2) = 1.0d0/30.0d0
-    Q(2,2) = dsqrt(7.0d0)*(7.0d0 + dsqrt(7.0d0)) * (-7.0d0 + 5.0d0*dsqrt(7.0d0)) / 840.0d0
-    Q(3,2) = dsqrt(7.0d0) * (7.0d0 - dsqrt(7.0d0)) * (7.0d0 + 5.0d0*dsqrt(7.0d0)) / 840.0d0
-    Q(4,2) = Q(3,2)
-    Q(5,2) = Q(2,2)
-    Q(6,2) = Q(1,2)
-  
-    RETURN
-    !----------------------------------------- CALCULATIONS HAVE FINISHED ---------------------------------------!
-  END SUBROUTINE GET_QUADRATURE1
-
 
   SUBROUTINE GET_MASS( POLY_ORD, MAXDX, Q, M )
 
@@ -1238,7 +923,6 @@ CONTAINS
 
     ! CELL INTERFACE VALUES
     REAL( 8 ), DIMENSION( 0 : 1 )                  :: TEMP
-    REAL( 8 ), DIMENSION( 1 : IMAX )               :: U
     REAL( 8 ), DIMENSION( 0 : IMAX + 1 )           :: U_M
     REAL( 8 ), DIMENSION( -1 : IMAX )              :: U_P
    
@@ -1323,22 +1007,9 @@ CONTAINS
     
     F_MAX = 0.0D0
 
-    DO I = 1, IMAX
-
-        TEMP( 0 ) = 0.0D0
-
-        DO ORD = 0, POLY_ORD
-
-            TEMP( 0 ) = TEMP( 0 ) + DEG( ORD, I ) * POLY( ORD, 0.0D0, DX( I ) )
-            U( I )    = TEMP( 0 )
-
-        END DO
-
-    END DO
-
-    F_MAX = MAXVAL( DABS( U ) )
-
     DO I = 0, IMAX
+
+        F_MAX   = MAX( DABS( U_M( I ) ), DABS( U_P( I ) ) )
 
         HAT_F( I ) = FLUX( U_M( I ) ) + FLUX( U_P( I ) ) + F_MAX * ( U_M( I ) -  U_P( I ) )
         HAT_F( I ) = HAT_F( I ) / 2.0D0

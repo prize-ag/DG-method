@@ -77,8 +77,8 @@ for j = 1:length(imax_list)
 
     save(filename,"x","u_exact");
 
-    % filename1 = sprintf('DG1D_GRIDLEVEL_%.d.TXT', j);
-    filename1 = sprintf('Density(Numerical_%d).plt', imax);
+    filename1 = sprintf('DG1D_GRIDLEVEL_%.d.TXT', j);
+    % filename1 = sprintf('Density(Numerical_%d).plt', imax);
 
     N = load(filename1);   % 또는 dlmread
 

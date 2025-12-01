@@ -1,1 +1,11 @@
 youn_burgers_AUTOFILE.f90 을 돌려서 만든 파일이 Density(Numerical_40) ~Density(Numerical_640)
+
+Kernel-HJ-2d-Conv-linearP 이거 셀 13번이 교수님이 newton mtd 사용해서 만든 ext soln 
+
+Hybrid_DG-5.pdf 하이브리드 dg 관련 논문 이박사님이 양교수님께 추천받음 -- 나도 읽어보면 좋을 듯!
+
+error_and_table_burgers.m 이거는 내가 만든 err 찾고, ext soln구하는 그런 거 근데 박사님이 error.m이라는 파일로 정리 잘해주심.. 
+
+B1_BUGERS.f90 1201기준 가장 최적화된 burgers' cod
+
+ERROR.m 박사님이 정리 잘해주신 내 코드 이제부터 이거 사용하자~
