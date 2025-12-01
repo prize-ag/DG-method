@@ -1,0 +1,1 @@
+youn_burgers_AUTOFILE.f90 을 돌려서 만든 파일이 Density(Numerical_40) ~Density(Numerical_640)

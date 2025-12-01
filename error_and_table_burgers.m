@@ -2,7 +2,7 @@
 % 버거스 방정식에 대한 exact soln을 구하는 코드가 들어있음
 % 초기조건은 변경 가능
 % 그리고 포트란으로 돌린 케이스들 가지고 와서, exact soln과 numerical soln을 비교
-% l_2 l_inf 에러를 구할 수 있고, 그에 따른 order 구함 
+% l_2 l_inf 에러를 구할 수 있고, 그에 따른 order 구함
 % 그리고 테이블로 만들어짐.
 
 
@@ -21,12 +21,12 @@ t = 0.3;  % shock 생기기 전
 xL = -1; xR = 1;
 length_space  = abs(xR - xL) ;
 
-imax_list = [40 80 160 320 640 ] ;
+imax_list = [40 80 160 320 640] ;
 
 L2_list    = zeros(size(imax_list)); % L2 에러 설정
-Linf_list  = zeros(size(imax_list)); % L inf 에러 설정 
-L2_err_ord = zeros(size(imax_list)); % L2 err order 
-Linf_err_ord = NaN(size(imax_list)); % L inf err order 
+Linf_list  = zeros(size(imax_list)); % L inf 에러 설정
+L2_err_ord = zeros(size(imax_list)); % L2 err order
+Linf_err_ord = NaN(size(imax_list)); % L inf err order
 
 
 for j = 1:length(imax_list)
@@ -35,14 +35,14 @@ for j = 1:length(imax_list)
 
     temp_x = zeros(1, imax + 1) ; % 경계에서의 값
     x = zeros(1,imax) ; %셀 중심에서의 값
-    dx = zeros(1,imax) ; 
+    dx = zeros(1,imax) ;
     for i = 1 : imax+1
         temp_x(i) = xL + length_space/imax * (i-1) ;
     end
 
     for i = 1: imax
         x(i)  = (temp_x(i)+temp_x(i+1))/2 ;
-        dx(i) = temp_x(i+1)-temp_x(i) ; 
+        dx(i) = temp_x(i+1)-temp_x(i) ;
     end
 
     u_exact = zeros(size(x));
@@ -59,12 +59,12 @@ for j = 1:length(imax_list)
     % %%newton method － 고차이다보니, 잘못된 해를 찾아줌.. 수정 필요
     % for i = 1:imax
     %     xi_guess = x(i);    % initial guess
-    % 
+    %
     %     F  = @(xi) xi + t*u0(xi) - x(i);
     %     Fp = @(xi) 1 + t*du0(xi);
-    % 
+    %
     %     xi_star = newton_burgers(F, Fp, xi_guess, 20, 1e-14);
-    % 
+    %
     %     u_exact(i) = u0(xi_star);
     % end
 
@@ -73,37 +73,39 @@ for j = 1:length(imax_list)
 
 
     %% save file and read file
-    filename = sprintf('ext_result_%d.mat', imax);  
-    
+    filename = sprintf('ext_result_%d.mat', imax);
+
     save(filename,"x","u_exact");
 
-    filename1 = sprintf('DG1D_GRIDLEVEL_%.d.TXT', j);
+    % filename1 = sprintf('DG1D_GRIDLEVEL_%.d.TXT', j);
+    filename1 = sprintf('Density(Numerical_%d).plt', imax);
+
     N = load(filename1);   % 또는 dlmread
 
 
     %%plot
 
-    figure;
-    plot(x, u_exact, 'bo', 'LineWidth', 1.3); hold on;
-    plot(N(:,1), N(:,2), 'r*', 'LineWidth', 1.3); hold on;
-
-    legend( 'Exact', 'Numerical');
-
-    grid on;
-    xlim([-1 1]);     % 전체 영역 보기
-    xlabel('x');
-    ylabel('Density');
-    title('Exact vs Numerical');
+    % figure;
+    % plot(x, u_exact, 'bo', 'LineWidth', 1.3); hold on;
+    % plot(N(:,1), N(:,2), 'r*', 'LineWidth', 1.3); hold on;
+    %
+    % legend( 'Exact', 'Numerical');
+    %
+    % grid on;
+    % xlim([-1 1]);     % 전체 영역 보기
+    % xlabel('x');
+    % ylabel('Density');
+    % title('Exact vs Numerical');
 
     %%plot
     err_vec = N(:,2)' - u_exact;   %0 크기 맞는 오차 벡터
-    L2_err = err_vec.^2 ; 
+    L2_err = err_vec.^2 ;
     L2_err = L2_err *dx(1) ; % 지금은 균일한 격자이므로
     L2_list(j)   = sqrt(sum(L2_err) ) ;
     Linf_list(j) = max(abs(err_vec));
 
     % fprintf("imax=%d → L2 = %.12e, L∞ = %.12e\n", ...
-        % imax, L2_list(j), Linf_list(j));
+    % imax, L2_list(j), Linf_list(j));
 end
 
 % ---  수렴차수(order) 계산 ---

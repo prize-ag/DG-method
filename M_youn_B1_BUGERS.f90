@@ -22,11 +22,11 @@ MODULE MODAL_DG_1D_GLOBALS
 
   ! USEFUL CONSTANTS AND FUNCTIONS
   REAL( 8 ), PARAMETER                                               :: PI        = 4.0D0 * DATAN( 1.0D0 )
-  REAL( 8 ), PARAMETER                                               :: CFL       = 0.1D0 / DBLE( 2 * POLY_ORD + 1 ) ! CFL NUMBER
+  REAL( 8 ), PARAMETER                                               :: CFL       = 0.5D0 / DBLE( 2 * POLY_ORD + 1 ) ! CFL NUMBER
 
   ! SPATIAL VARIABLES
   INTEGER                                                            :: IMAX                                 ! ACTIVE NUMBER OF SPATIAL CELLS
-  INTEGER,   PARAMETER                                               :: I_BC      = 1                        ! GHOST BOUNDARY CELLS FOR WENO SCHEMES
+  INTEGER,   PARAMETER                                               :: I_BC      = 5                        ! GHOST BOUNDARY CELLS FOR WENO SCHEMES
   REAL( 8 ), PARAMETER                                               :: X_LEFT    = - 1.0D0                  ! LEFT BOUNDARY ON X-AXIS
   REAL( 8 ), PARAMETER                                               :: X_RIGHT   = + 1.0D0                  ! RIGHT BOUNDARY ON X-AXIS
   REAL( 8 ), PARAMETER                                               :: X_LENGTH  = DABS( X_RIGHT - X_LEFT ) ! LENGTH OF DOMAIN
@@ -670,6 +670,37 @@ CONTAINS
     RETURN
     !----------------------------------------- CALCULATIONS HAVE FINISHED ---------------------------------------!
   END SUBROUTINE GET_QUADRATURE
+
+  SUBROUTINE GET_QUADRATURE1( Q )
+
+    IMPLICIT NONE
+
+    REAL( 8 ), INTENT( OUT ), DIMENSION( 1 : 6, 1 : 2 ) :: Q
+    !----------------------------------------- CALCULATIONS HAVE STARTED ----------------------------------------!
+
+    ! QUADRATURE WEIGHTS ARE SCALED FOR INTEGRATIONS ON [ -1.0D0 / 2.0D0, 1.0D0 / 2.0D0 ]
+    ! JACOBIAN OF THE AFFINE MAPPING IS APPLIED TO EACH QUADRATURE WEIGHT
+
+    ! NODES OF 6TH-ORDER GAUSS-LOBATTO QUADRATURE
+    Q(1,1) = -1.0d0/2.0d0
+    Q(2,1) = -dsqrt(147.0d0 + 42.0d0*dsqrt(7.0d0)) / 42.0d0
+    Q(3,1) = -dsqrt(147.0d0 - 42.0d0*dsqrt(7.0d0)) / 42.0d0
+    Q(4,1) =  dsqrt(147.0d0 - 42.0d0*dsqrt(7.0d0)) / 42.0d0
+    Q(5,1) =  dsqrt(147.0d0 + 42.0d0*dsqrt(7.0d0)) / 42.0d0
+    Q(6,1) =  1.0d0/2.0d0
+
+
+    Q(1,2) = 1.0d0/30.0d0
+    Q(2,2) = dsqrt(7.0d0)*(7.0d0 + dsqrt(7.0d0)) * (-7.0d0 + 5.0d0*dsqrt(7.0d0)) / 840.0d0
+    Q(3,2) = dsqrt(7.0d0) * (7.0d0 - dsqrt(7.0d0)) * (7.0d0 + 5.0d0*dsqrt(7.0d0)) / 840.0d0
+    Q(4,2) = Q(3,2)
+    Q(5,2) = Q(2,2)
+    Q(6,2) = Q(1,2)
+  
+    RETURN
+    !----------------------------------------- CALCULATIONS HAVE FINISHED ---------------------------------------!
+  END SUBROUTINE GET_QUADRATURE1
+
 
   SUBROUTINE GET_MASS( POLY_ORD, MAXDX, Q, M )
 
